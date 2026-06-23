@@ -254,6 +254,33 @@ func TestChatGPTImportSinceAndConversationFilters(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportSupportsWrappedConversationsPayload(t *testing.T) {
+	folder := t.TempDir()
+	wrapped := map[string]any{
+		"conversations": sampleConversationPayload(),
+	}
+	encoded, err := json.Marshal(wrapped)
+	if err != nil {
+		t.Fatalf("failed marshaling wrapped payload: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "wrapped_conversations.json"), encoded, 0o644); err != nil {
+		t.Fatalf("failed writing wrapped payload file: %v", err)
+	}
+
+	result, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if result.ConversationsFound != 1 {
+		t.Fatalf("expected 1 conversation found, got %d", result.ConversationsFound)
+	}
+	if result.MessagesAccepted != 2 {
+		t.Fatalf("expected 2 accepted messages, got %d", result.MessagesAccepted)
+	}
+}
+
 func writeConversationsJSON(t *testing.T, dir string, payload any) {
 	t.Helper()
 	encoded, err := json.Marshal(payload)

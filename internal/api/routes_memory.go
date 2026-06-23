@@ -420,9 +420,7 @@ func (s *Server) deleteSessionState(r *http.Request, sessionID string) error {
 	if s.redis == nil {
 		return nil
 	}
-	if err := s.redis.Del(r.Context(), s.sessionStateKey(sessionID)); err != nil {
-		return err
-	}
+	_ = s.redis.Del(r.Context(), s.sessionStateKey(sessionID))
 	return nil
 }
 
