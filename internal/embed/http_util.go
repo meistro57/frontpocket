@@ -62,6 +62,47 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, headers
 	return nil
 }
 
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryableEmbeddingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	retryable := []string{
+		"status 408",
+		"status 429",
+		"status 500",
+		"status 502",
+		"status 503",
+		"status 504",
+		"timeout",
+		"deadline exceeded",
+		"unexpected end of json input",
+		"connection reset",
+		"connection refused",
+		"returned 0 vectors",
+	}
+	for _, marker := range retryable {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func toFloat32Slice(values []float64) []float32 {
 	out := make([]float32, len(values))
 	for i, v := range values {

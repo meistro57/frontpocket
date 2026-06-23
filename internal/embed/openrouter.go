@@ -6,6 +6,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
+)
+
+const (
+	openRouterMaxAttempts = 4
+	openRouterRetryDelay  = 400 * time.Millisecond
 )
 
 type OpenRouterEmbedder struct {
@@ -46,10 +52,59 @@ func (e *OpenRouterEmbedder) EmbedText(ctx context.Context, text string) ([]floa
 }
 
 func (e *OpenRouterEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.embedBatchWithRetry(ctx, texts, true)
+}
+
+func (e *OpenRouterEmbedder) embedBatchWithRetry(ctx context.Context, texts []string, allowSplit bool) ([][]float32, error) {
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
 
+	var lastErr error
+	for attempt := 1; attempt <= openRouterMaxAttempts; attempt++ {
+		vectors, err := e.embedBatchOnce(ctx, texts)
+		if err == nil {
+			return vectors, nil
+		}
+		lastErr = err
+		if !isRetryableEmbeddingError(err) || attempt == openRouterMaxAttempts {
+			break
+		}
+		if waitErr := sleepWithContext(ctx, time.Duration(attempt)*openRouterRetryDelay); waitErr != nil {
+			return nil, waitErr
+		}
+	}
+
+	if allowSplit && len(texts) > 1 {
+		vectors, err := e.embedBatchSerial(ctx, texts)
+		if err == nil {
+			return vectors, nil
+		}
+		if lastErr != nil {
+			return nil, fmt.Errorf("%w; serial fallback failed: %v", lastErr, err)
+		}
+		return nil, err
+	}
+
+	return nil, lastErr
+}
+
+func (e *OpenRouterEmbedder) embedBatchSerial(ctx context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(texts))
+	for idx, text := range texts {
+		chunkVectors, err := e.embedBatchWithRetry(ctx, []string{text}, false)
+		if err != nil {
+			return nil, fmt.Errorf("openrouter serial embed failed at input %d: %w", idx, err)
+		}
+		if len(chunkVectors) != 1 {
+			return nil, fmt.Errorf("openrouter serial embed returned %d vectors for single input", len(chunkVectors))
+		}
+		vectors = append(vectors, chunkVectors[0])
+	}
+	return vectors, nil
+}
+
+func (e *OpenRouterEmbedder) embedBatchOnce(ctx context.Context, texts []string) ([][]float32, error) {
 	payload := map[string]any{
 		"model":           e.model,
 		"input":           texts,
