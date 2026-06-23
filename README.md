@@ -8,23 +8,35 @@ FrontPocket is a local-first memory engine for AI companions, agents, and creati
 
 It gives your assistant a searchable, source-backed way to recall past conversations, project context, preferences, decisions, and long-running threads without pretending to know things it cannot verify.
 
+No crystal ball. Just retrieval with receipts.
+
 FrontPocket uses a **Go HTTP API** in front of **Qdrant** (long-term semantic memory) and **Redis** (working/session memory).
 
 Current version: **0.1.0**
 
 ---
 
+## Why FrontPocket
+
+- Keeps recall grounded in source metadata.
+- Prioritizes local-first defaults.
+- Retrieves what matters now instead of prompt-stuffing everything.
+- Stays practical: boring architecture, useful outcomes.
+
+---
+
 ## Current Status
 
-FrontPocket now has a working Go-first scaffold with:
+FrontPocket has a working Go-first foundation with:
 
-- Go module and command entrypoint (`cmd/frontpocket/main.go`)
+- Go module + command entrypoint (`cmd/frontpocket/main.go`)
 - Config loading from environment (`internal/config`)
-- HTTP API server and API key middleware (`internal/api`)
+- HTTP API server + API key middleware (`internal/api`)
 - Memory ingest/search/context-pack handlers
-- JSONL parser and chunking (`internal/memory`)
-- Pluggable embedder interface with provider stubs (`internal/embed`)
-- Health checks for Qdrant and Redis (`internal/store`)
+- JSONL parser + chunking (`internal/memory`)
+- Ollama/OpenAI/OpenRouter HTTP embedders (`internal/embed`)
+- Qdrant-backed memory store with vector-size validation (`internal/store`)
+- Redis-backed search caching (`internal/store` + `internal/api`)
 - Dockerfile + Docker Compose + `.env.example`
 
 ---
@@ -89,13 +101,19 @@ Example search response:
 cp .env.example .env
 ```
 
-### 2) Run with Docker Compose
+### 2) Install Qdrant + Redis if missing
+
+```bash
+./scripts/install_qdrant_redis.sh
+```
+
+### 3) Run the stack
 
 ```bash
 docker compose up --build
 ```
 
-### 3) Health check
+### 4) Health check
 
 ```bash
 curl http://localhost:8088/health
@@ -112,7 +130,7 @@ Expected response:
 }
 ```
 
-### 4) Ingest a chat sample
+### 5) Ingest a chat sample
 
 ```bash
 curl -X POST http://localhost:8088/memory/ingest/chat \
@@ -131,13 +149,15 @@ curl -X POST http://localhost:8088/memory/ingest/chat \
   }'
 ```
 
-### 5) Search memory
+### 6) Search memory
 
 ```bash
 curl -X POST http://localhost:8088/memory/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"source-backed Go memory","limit":5}'
 ```
+
+Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce repeated vector lookups.
 
 ---
 

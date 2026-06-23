@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -95,6 +98,11 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampLimit(req.Limit)
+	if cached, ok := s.getCachedSearchResults(r, req); ok {
+		writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: cached})
+		return
+	}
+
 	results, err := s.memoryStore.Search(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
@@ -106,6 +114,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results = s.filterResults(results)
+	s.setCachedSearchResults(r, req, results)
 	writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: results})
 }
 
@@ -179,6 +188,47 @@ func (s *Server) filterResults(results []memory.SearchResult) []memory.SearchRes
 		filtered = append(filtered, result)
 	}
 	return filtered
+}
+
+func (s *Server) getCachedSearchResults(r *http.Request, req memory.SearchRequest) ([]memory.SearchResult, bool) {
+	if s.redis == nil || s.searchCacheTTL <= 0 {
+		return nil, false
+	}
+
+	key := s.searchResultCacheKey(req)
+	cached, found, err := s.redis.Get(r.Context(), key)
+	if err != nil || !found {
+		return nil, false
+	}
+
+	var results []memory.SearchResult
+	if err := json.Unmarshal([]byte(cached), &results); err != nil {
+		return nil, false
+	}
+	return results, true
+}
+
+func (s *Server) setCachedSearchResults(r *http.Request, req memory.SearchRequest, results []memory.SearchResult) {
+	if s.redis == nil || s.searchCacheTTL <= 0 {
+		return
+	}
+
+	payload, err := json.Marshal(results)
+	if err != nil {
+		return
+	}
+	_ = s.redis.SetEX(r.Context(), s.searchResultCacheKey(req), string(payload), s.searchCacheTTL)
+}
+
+func (s *Server) searchResultCacheKey(req memory.SearchRequest) string {
+	prefix := s.searchCacheKey
+	if prefix == "" {
+		prefix = "frontpocket"
+	}
+
+	encoded, _ := json.Marshal(req)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%s:search:%s", prefix, hex.EncodeToString(sum[:]))
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

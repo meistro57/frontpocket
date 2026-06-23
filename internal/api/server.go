@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/meistro57/frontpocket/internal/config"
@@ -25,6 +26,8 @@ type Server struct {
 	defaultSearch  int
 	maxSearch      int
 	minSearchScore float64
+	searchCacheTTL time.Duration
+	searchCacheKey string
 }
 
 func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -43,7 +46,15 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 
-	memStore := memory.NewInMemoryStore()
+	fallbackStore := memory.NewInMemoryStore()
+	memStore := store.NewQdrantMemoryStore(
+		qdrant,
+		embedder,
+		cfg.Qdrant.Collection,
+		cfg.Qdrant.VectorName,
+		cfg.Qdrant.Distance,
+		fallbackStore,
+	)
 	ingestor := memory.Ingestor{
 		Chunker: memory.Chunker{
 			Size:    cfg.Chunking.Size,
@@ -73,6 +84,8 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		defaultSearch:  cfg.Search.DefaultLimit,
 		maxSearch:      cfg.Search.MaxLimit,
 		minSearchScore: cfg.Search.MinScore,
+		searchCacheTTL: time.Duration(cfg.Search.CacheTTLSeconds) * time.Second,
+		searchCacheKey: strings.TrimSpace(cfg.Redis.KeyPrefix),
 	}
 
 	s.registerRoutes()
@@ -126,9 +139,16 @@ func selectEmbedder(cfg config.Config) (embed.Embedder, error) {
 	case "ollama":
 		return embed.NewOllamaEmbedder(cfg.Embedding.OllamaBaseURL, cfg.Embedding.OllamaModel, cfg.Embedding.Dimensions), nil
 	case "openai":
-		return embed.NewOpenAIEmbedder(cfg.Embedding.OpenAIBaseURL, cfg.Embedding.OpenAIModel, cfg.Embedding.Dimensions), nil
+		return embed.NewOpenAIEmbedder(cfg.Embedding.OpenAIBaseURL, cfg.Embedding.OpenAIModel, cfg.Embedding.OpenAIKey, cfg.Embedding.Dimensions), nil
 	case "openrouter":
-		return embed.NewOpenRouterEmbedder(cfg.Embedding.OpenRouterURL, cfg.Embedding.OpenRouterMod, cfg.Embedding.Dimensions), nil
+		return embed.NewOpenRouterEmbedder(
+			cfg.Embedding.OpenRouterURL,
+			cfg.Embedding.OpenRouterMod,
+			cfg.Embedding.OpenRouterKey,
+			cfg.Embedding.OpenRouterSite,
+			cfg.Embedding.OpenRouterApp,
+			cfg.Embedding.Dimensions,
+		), nil
 	default:
 		return nil, fmt.Errorf("unsupported EMBEDDING_PROVIDER: %s", cfg.Embedding.Provider)
 	}

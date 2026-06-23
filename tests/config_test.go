@@ -33,3 +33,14 @@ func TestOpenAIProviderRequiresAPIKey(t *testing.T) {
 		t.Fatal("expected error for missing OPENAI_API_KEY")
 	}
 }
+
+func TestSearchCacheTTLCannotBeNegative(t *testing.T) {
+	t.Setenv("EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("SEARCH_CACHE_TTL_SECONDS", "-1")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for negative SEARCH_CACHE_TTL_SECONDS")
+	}
+}

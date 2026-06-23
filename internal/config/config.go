@@ -86,6 +86,7 @@ type SearchConfig struct {
 	MinScore           float64
 	IncludeSourceQuote bool
 	IncludeFullText    bool
+	CacheTTLSeconds    int
 }
 
 type ContextPackConfig struct {
@@ -164,6 +165,7 @@ func Load() (Config, error) {
 			MinScore:           getEnvFloat("SEARCH_MIN_SCORE", 0),
 			IncludeSourceQuote: getEnvBool("INCLUDE_SOURCE_QUOTES", true),
 			IncludeFullText:    getEnvBool("INCLUDE_FULL_TEXT", true),
+			CacheTTLSeconds:    getEnvInt("SEARCH_CACHE_TTL_SECONDS", 45),
 		},
 		ContextPack: ContextPackConfig{
 			DefaultLimit:  getEnvInt("CONTEXT_PACK_DEFAULT_LIMIT", 8),
@@ -202,6 +204,9 @@ func (c Config) Validate() error {
 	}
 	if c.Search.DefaultLimit > c.Search.MaxLimit {
 		return errors.New("SEARCH_DEFAULT_LIMIT cannot exceed SEARCH_MAX_LIMIT")
+	}
+	if c.Search.CacheTTLSeconds < 0 {
+		return errors.New("SEARCH_CACHE_TTL_SECONDS cannot be negative")
 	}
 	if c.ContextPack.DefaultLimit <= 0 {
 		return errors.New("CONTEXT_PACK_DEFAULT_LIMIT must be greater than 0")

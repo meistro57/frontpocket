@@ -14,16 +14,45 @@ import (
 )
 
 func TestIngestAndSearchFlow(t *testing.T) {
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+
+		var req struct {
+			Input any `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		count := 1
+		switch v := req.Input.(type) {
+		case []any:
+			if len(v) > 0 {
+				count = len(v)
+			}
+		}
+
+		embeddings := make([][]float64, 0, count)
+		for i := 0; i < count; i++ {
+			embeddings = append(embeddings, []float64{0.1, 0.2, 0.3, 0.4})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": embeddings})
+	}))
+	defer embeddingServer.Close()
+
 	cfg := config.Config{
 		App: config.AppConfig{Host: "127.0.0.1", Port: 8088},
 		Security: config.SecurityConfig{
 			RequireAPIKey: false,
 		},
-		Qdrant: config.QdrantConfig{URL: "http://localhost:6333"},
-		Redis:  config.RedisConfig{URL: "redis://localhost:6379/0"},
+		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
+		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
 		Embedding: config.EmbeddingConfig{
-			Provider:    "ollama",
-			OllamaModel: "nomic-embed-text",
+			Provider:      "ollama",
+			OllamaModel:   "nomic-embed-text",
+			OllamaBaseURL: embeddingServer.URL,
+			Dimensions:    4,
 		},
 		Ingestion: config.IngestionConfig{
 			DefaultSourceType:      "chat_export",
@@ -38,6 +67,7 @@ func TestIngestAndSearchFlow(t *testing.T) {
 			MinScore:           0,
 			IncludeSourceQuote: true,
 			IncludeFullText:    true,
+			CacheTTLSeconds:    30,
 		},
 		ContextPack: config.ContextPackConfig{DefaultLimit: 8, MaxLimit: 20},
 	}
