@@ -8,6 +8,6 @@ FrontPocket is local-first by default.
 - Do not expose Redis or Qdrant directly to the public internet.
 - Use the Go API as the public boundary.
 - Keep public endpoints read-only first (`/health`, `/openapi.json`, `/memory/search`, `/memory/context-pack`).
-- Keep operational endpoints private (`/memory/stats`, `/memory/session`, `/memory/ingest/chat`).
+- Keep operational endpoints private (`/memory/stats`, `/memory/session`, `/memory/ingest/chat`), including `DELETE /memory/session`.
 - Enable API key middleware for exposed deployments.
 - Prefer local providers when handling sensitive memory data.

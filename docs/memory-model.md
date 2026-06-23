@@ -12,7 +12,7 @@ FrontPocket stores memory points with:
 - Long-term semantic memory lives in Qdrant.
 - Working/session recall cache lives in Redis.
 - Search results may be cached for `SEARCH_CACHE_TTL_SECONDS`.
-- Session state can be saved/loaded through `POST /memory/session`.
+- Session state can be saved/loaded through `POST /memory/session` and cleared through `DELETE /memory/session`.
 - Aggregate memory totals are exposed through `GET /memory/stats`.
 - Collection vector size is validated against embedding output dimensions.
 

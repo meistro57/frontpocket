@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FrontPocket API
-  version: 0.1.0
+  version: 0.2.0
   description: Source-backed memory retrieval API for FrontPocket.
 servers:
   - url: http://localhost:8088
@@ -12,85 +12,45 @@ paths:
       summary: Health status
       responses:
         '200':
-          description: Service health
+          description: Service health.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  qdrant:
-                    type: string
-                  redis:
-                    type: string
-                  version:
-                    type: string
+                $ref: '#/components/schemas/HealthResponse'
   /openapi.json:
     get:
       operationId: getOpenAPISchema
       summary: Fetch OpenAPI schema
       responses:
         '200':
-          description: OpenAPI schema
+          description: OpenAPI schema payload.
+          content:
+            application/json:
+              schema:
+                type: object
   /memory/stats:
     get:
       operationId: getMemoryStats
       summary: Get aggregated memory stats
       parameters:
-        - in: query
-          name: project
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: memory_kind
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: speaker
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: source_type
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: conversation_id
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: tags
-          required: false
-          schema:
-            type: string
-            description: Comma-separated tags.
+        - $ref: '#/components/parameters/projectFilter'
+        - $ref: '#/components/parameters/memoryKindFilter'
+        - $ref: '#/components/parameters/speakerFilter'
+        - $ref: '#/components/parameters/sourceTypeFilter'
+        - $ref: '#/components/parameters/conversationIDFilter'
+        - $ref: '#/components/parameters/tagFilter'
+        - $ref: '#/components/parameters/tagsFilter'
       responses:
         '200':
-          description: Aggregated memory statistics
+          description: Aggregated memory statistics.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  total:
-                    type: integer
-                  by_kind:
-                    type: object
-                    additionalProperties:
-                      type: integer
-                  by_speaker:
-                    type: object
-                    additionalProperties:
-                      type: integer
-                  by_project:
-                    type: object
-                    additionalProperties:
-                      type: integer
+                $ref: '#/components/schemas/MemoryStats'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /memory/session:
     post:
       operationId: upsertOrLoadSessionState
@@ -100,58 +60,38 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [session_id]
-              properties:
-                session_id:
-                  type: string
-                project:
-                  type: string
-                active_summary:
-                  type: string
-                recent_memory_ids:
-                  type: array
-                  items:
-                    type: string
-                metadata:
-                  type: object
-                  additionalProperties:
-                    type: string
-                ttl_seconds:
-                  type: integer
-                  minimum: 1
-                load_only:
-                  type: boolean
+              $ref: '#/components/schemas/SessionRequest'
       responses:
         '200':
-          description: Session state response
+          description: Session state response.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  found:
-                    type: boolean
-                  state:
-                    type: object
-                    properties:
-                      session_id:
-                        type: string
-                      project:
-                        type: string
-                      active_summary:
-                        type: string
-                      recent_memory_ids:
-                        type: array
-                        items:
-                          type: string
-                      metadata:
-                        type: object
-                        additionalProperties:
-                          type: string
-                      updated_at:
-                        type: string
-                        format: date-time
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      operationId: deleteSessionState
+      summary: Delete a session state record
+      parameters:
+        - $ref: '#/components/parameters/sessionIDQuery'
+      responses:
+        '200':
+          description: Session delete response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /memory/search:
     post:
       operationId: searchMemory
@@ -161,18 +101,20 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [query]
-              properties:
-                query:
-                  type: string
-                limit:
-                  type: integer
-                  minimum: 1
-                  maximum: 20
+              $ref: '#/components/schemas/SearchRequest'
       responses:
         '200':
-          description: Search results
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /memory/context-pack:
     post:
       operationId: buildContextPack
@@ -182,15 +124,371 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [query]
-              properties:
-                query:
-                  type: string
-                limit:
-                  type: integer
-                  minimum: 1
-                  maximum: 20
+              $ref: '#/components/schemas/ContextPackRequest'
       responses:
         '200':
-          description: Context pack response
+          description: Context pack response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextPackResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /memory/ingest/chat:
+    post:
+      operationId: ingestChatMemory
+      summary: Ingest normalized chat records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestChatRequest'
+      responses:
+        '200':
+          description: Ingestion response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestChatResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-FrontPocket-Key
+  parameters:
+    projectFilter:
+      in: query
+      name: project
+      required: false
+      schema:
+        type: string
+    memoryKindFilter:
+      in: query
+      name: memory_kind
+      required: false
+      schema:
+        type: string
+    speakerFilter:
+      in: query
+      name: speaker
+      required: false
+      schema:
+        type: string
+    sourceTypeFilter:
+      in: query
+      name: source_type
+      required: false
+      schema:
+        type: string
+    conversationIDFilter:
+      in: query
+      name: conversation_id
+      required: false
+      schema:
+        type: string
+    tagFilter:
+      in: query
+      name: tag
+      required: false
+      schema:
+        type: string
+      description: Filter by tag. Can be repeated.
+    tagsFilter:
+      in: query
+      name: tags
+      required: false
+      schema:
+        type: string
+      description: Comma-separated tag list.
+    sessionIDQuery:
+      in: query
+      name: session_id
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Session identifier.
+  responses:
+    ValidationError:
+      description: Invalid request payload.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UnauthorizedError:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InternalServerError:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, qdrant, redis, version]
+      properties:
+        status:
+          type: string
+        qdrant:
+          type: string
+        redis:
+          type: string
+        version:
+          type: string
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        detail:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+    SearchFilters:
+      type: object
+      properties:
+        project:
+          type: string
+        memory_kind:
+          type: string
+        speaker:
+          type: string
+        source_type:
+          type: string
+        conversation_id:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20
+        filters:
+          $ref: '#/components/schemas/SearchFilters'
+    SearchResult:
+      type: object
+      required: [memory_id, conversation_id, source_title, source_type, timestamp, speaker, memory_kind, summary, score, embedding_provider, embedding_model, embedding_dimensions]
+      properties:
+        memory_id:
+          type: string
+        conversation_id:
+          type: string
+        source_title:
+          type: string
+        source_type:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        speaker:
+          type: string
+        project:
+          type: string
+        memory_kind:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        source_quote:
+          type: string
+        text:
+          type: string
+        score:
+          type: number
+          format: double
+        embedding_provider:
+          type: string
+        embedding_model:
+          type: string
+        embedding_dimensions:
+          type: integer
+    SearchResponse:
+      type: object
+      required: [query, results]
+      properties:
+        query:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+    ContextPackRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20
+        filters:
+          $ref: '#/components/schemas/SearchFilters'
+    ContextPackResponse:
+      type: object
+      required: [query, memory_pack]
+      properties:
+        query:
+          type: string
+        memory_pack:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+    MessageRecord:
+      type: object
+      required: [conversation_id, speaker, text]
+      properties:
+        conversation_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        speaker:
+          type: string
+        text:
+          type: string
+        source_type:
+          type: string
+        source_title:
+          type: string
+        project:
+          type: string
+        memory_kind:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    IngestChatRequest:
+      type: object
+      properties:
+        source_title:
+          type: string
+        source_type:
+          type: string
+        project:
+          type: string
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageRecord'
+        jsonl:
+          type: string
+    IngestChatResponse:
+      type: object
+      required: [inserted_count, memory_ids]
+      properties:
+        inserted_count:
+          type: integer
+        memory_ids:
+          type: array
+          items:
+            type: string
+    MemoryStats:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+        by_kind:
+          type: object
+          additionalProperties:
+            type: integer
+        by_speaker:
+          type: object
+          additionalProperties:
+            type: integer
+        by_project:
+          type: object
+          additionalProperties:
+            type: integer
+    SessionRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+        project:
+          type: string
+        active_summary:
+          type: string
+        recent_memory_ids:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        ttl_seconds:
+          type: integer
+          minimum: 1
+        load_only:
+          type: boolean
+    SessionState:
+      type: object
+      required: [session_id, updated_at]
+      properties:
+        session_id:
+          type: string
+        project:
+          type: string
+        active_summary:
+          type: string
+        recent_memory_ids:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        updated_at:
+          type: string
+          format: date-time
+    SessionResponse:
+      type: object
+      required: [found]
+      properties:
+        found:
+          type: boolean
+        state:
+          $ref: '#/components/schemas/SessionState'

@@ -141,6 +141,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /memory/context-pack", s.handleContextPack)
 	s.mux.HandleFunc("GET /memory/stats", s.handleMemoryStats)
 	s.mux.HandleFunc("POST /memory/session", s.handleMemorySession)
+	s.mux.HandleFunc("DELETE /memory/session", s.handleMemorySessionDelete)
 }
 
 func selectEmbedder(cfg config.Config) (embed.Embedder, error) {

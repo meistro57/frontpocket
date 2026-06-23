@@ -9,7 +9,7 @@
   <img src="docs/assets/badge-go-api.svg" alt="Go API" />
   <img src="docs/assets/badge-qdrant.svg" alt="Qdrant" />
   <img src="docs/assets/badge-redis.svg" alt="Redis" />
-  <img src="docs/assets/badge-v010.svg" alt="Version 0.1.0" />
+  <img src="docs/assets/badge-v020.svg" alt="Version 0.2.0" />
 </p>
 
 FrontPocket is a local-first memory engine for AI companions, agents, and creative workflows.
@@ -32,9 +32,10 @@ No crystal ball. Just retrieval with receipts.
 GET  /health
 GET  /openapi.json
 GET  /memory/stats
-POST /memory/session
-POST /memory/ingest/chat
-POST /memory/search
+POST   /memory/session
+DELETE /memory/session
+POST   /memory/ingest/chat
+POST   /memory/search
 POST /memory/context-pack
 ```
 
@@ -82,7 +83,7 @@ Expected response:
   "status": "ok",
   "qdrant": "connected",
   "redis": "connected",
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
 ```
 
@@ -147,6 +148,26 @@ Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce re
 - Request samples: `examples/search_request.json`
 - OpenAPI action schema sample: `examples/openapi_action_schema.yaml`
 - JSONL sample import: `examples/chat_export_sample.jsonl`
+
+## ChatGPT export ingest (CLI)
+
+FrontPocket can parse ChatGPT exports from either a `.zip` file or an extracted folder and normalize them into JSONL-compatible records.
+
+```bash
+frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket
+frontpocket ingest chatgpt ./chatgpt-export.zip --out data/processed/chatgpt_normalized.jsonl
+```
+
+Additional filters:
+
+```bash
+frontpocket ingest chatgpt ./chatgpt-export.zip --since 2026-01-01
+frontpocket ingest chatgpt ./chatgpt-export.zip --conversation "FrontPocket"
+frontpocket ingest chatgpt ./unzipped-chatgpt-export/
+```
+
+Attachments and assets are detected and reported in import stats, but they are not ingested yet.
 
 ## Docs
 

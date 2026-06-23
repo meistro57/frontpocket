@@ -87,6 +87,17 @@ func (c *RedisClient) SetEX(ctx context.Context, key, value string, ttl time.Dur
 	return nil
 }
 
+func (c *RedisClient) Del(ctx context.Context, key string) error {
+	reply, err := c.exec(ctx, "DEL", key)
+	if err != nil {
+		return err
+	}
+	if _, convErr := strconv.Atoi(strings.TrimSpace(reply.text)); convErr != nil {
+		return fmt.Errorf("unexpected redis DEL response: %q", reply.text)
+	}
+	return nil
+}
+
 type redisReply struct {
 	text string
 	nil  bool

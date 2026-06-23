@@ -13,6 +13,7 @@ Operational endpoints (keep private or trusted-only):
 
 - `GET /memory/stats`
 - `POST /memory/session`
+- `DELETE /memory/session`
 
 Admin and mutation endpoints should remain private.
 

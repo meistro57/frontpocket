@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -17,36 +18,52 @@ import (
 )
 
 func main() {
-	showVersion := flag.Bool("version", false, "print FrontPocket version")
-	flag.Parse()
-	if *showVersion {
-		fmt.Println(version.Current)
-		return
+	if err := run(os.Args[1:]); err != nil {
+		slog.Error("frontpocket command failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	if len(args) > 0 && args[0] == "ingest" {
+		return runIngestCommand(args[1:])
 	}
 
+	flags := flag.NewFlagSet("frontpocket", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	showVersion := flags.Bool("version", false, "print FrontPocket version")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *showVersion {
+		fmt.Println(version.Current)
+		return nil
+	}
+
+	return runServer()
+}
+
+func runServer() error {
 	if err := config.LoadDotEnv(".env"); err != nil {
-		slog.Error("failed loading .env", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed loading config", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	logger := logfp.New(cfg.Logging)
 	server, err := api.NewServer(cfg, logger)
 	if err != nil {
-		logger.Error("failed creating server", "error", err)
-		os.Exit(1)
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	if err := server.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("server terminated", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }

@@ -49,6 +49,19 @@ func TestMemorySessionEndpoint(t *testing.T) {
 		t.Fatalf("expected 400 for missing session_id, got %d", invalidResp.StatusCode)
 	}
 
+	invalidDeleteReq, err := http.NewRequest(http.MethodDelete, testServer.URL+"/memory/session", nil)
+	if err != nil {
+		t.Fatalf("invalid delete request creation failed: %v", err)
+	}
+	invalidDeleteResp, err := http.DefaultClient.Do(invalidDeleteReq)
+	if err != nil {
+		t.Fatalf("invalid delete request failed: %v", err)
+	}
+	defer invalidDeleteResp.Body.Close()
+	if invalidDeleteResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for delete without session_id query parameter, got %d", invalidDeleteResp.StatusCode)
+	}
+
 	setReq := memory.SessionRequest{
 		SessionID:       "session_1",
 		Project:         "FrontPocket",
@@ -107,5 +120,51 @@ func TestMemorySessionEndpoint(t *testing.T) {
 	}
 	if len(loadBody.State.RecentMemoryIDs) != 2 {
 		t.Fatalf("expected 2 recent_memory_ids, got %d", len(loadBody.State.RecentMemoryIDs))
+	}
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, testServer.URL+"/memory/session?session_id=session_1", nil)
+	if err != nil {
+		t.Fatalf("delete session request creation failed: %v", err)
+	}
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("delete session request failed: %v", err)
+	}
+	defer deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for delete session, got %d", deleteResp.StatusCode)
+	}
+
+	var deleteBody memory.SessionResponse
+	if err := json.NewDecoder(deleteResp.Body).Decode(&deleteBody); err != nil {
+		t.Fatalf("decoding delete session response failed: %v", err)
+	}
+	if deleteBody.Found {
+		t.Fatal("expected found=false after delete")
+	}
+	if deleteBody.State != nil {
+		t.Fatal("expected state=nil after delete")
+	}
+
+	loadAfterDeleteReq := memory.SessionRequest{SessionID: "session_1", LoadOnly: true}
+	loadAfterDeletePayload, _ := json.Marshal(loadAfterDeleteReq)
+	loadAfterDeleteResp, err := http.Post(testServer.URL+"/memory/session", "application/json", bytes.NewReader(loadAfterDeletePayload))
+	if err != nil {
+		t.Fatalf("load after delete request failed: %v", err)
+	}
+	defer loadAfterDeleteResp.Body.Close()
+	if loadAfterDeleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for load after delete, got %d", loadAfterDeleteResp.StatusCode)
+	}
+
+	var loadAfterDeleteBody memory.SessionResponse
+	if err := json.NewDecoder(loadAfterDeleteResp.Body).Decode(&loadAfterDeleteBody); err != nil {
+		t.Fatalf("decoding load after delete response failed: %v", err)
+	}
+	if loadAfterDeleteBody.Found {
+		t.Fatal("expected found=false after session delete")
+	}
+	if loadAfterDeleteBody.State != nil {
+		t.Fatal("expected empty state after session delete")
 	}
 }

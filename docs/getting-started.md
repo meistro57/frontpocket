@@ -44,7 +44,24 @@ curl -X POST http://localhost:8088/memory/session \
   -d '{"session_id":"frontpocket-dev","project":"FrontPocket","active_summary":"Working on memory endpoints"}'
 ```
 
-## 8) Run tests
+## 8) Delete session state (optional)
+
+```bash
+curl -X DELETE 'http://localhost:8088/memory/session?session_id=frontpocket-dev'
+```
+
+## 9) Ingest a ChatGPT export (zip or folder)
+
+```bash
+frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket
+frontpocket ingest chatgpt ./chatgpt-export.zip --out data/processed/chatgpt_normalized.jsonl
+frontpocket ingest chatgpt ./unzipped-chatgpt-export/
+```
+
+Attachments/assets are detected and reported during import, but they are not ingested yet.
+
+## 10) Run tests
 
 ```bash
 go test ./...

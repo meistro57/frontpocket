@@ -230,6 +230,28 @@ func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: true, State: &state})
 }
 
+func (s *Server) handleMemorySessionDelete(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "VALIDATION_ERROR",
+			Message: "session_id query parameter is required.",
+		})
+		return
+	}
+
+	if err := s.deleteSessionState(r, sessionID); err != nil {
+		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			Code:    "SESSION_FAILED",
+			Message: "Session delete failed.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: false})
+}
+
 func statsFiltersFromQuery(r *http.Request) memory.SearchFilters {
 	query := r.URL.Query()
 	filters := memory.SearchFilters{
@@ -387,6 +409,20 @@ func (s *Server) setSessionState(r *http.Request, state memory.SessionState, ttl
 		return nil
 	}
 	_ = s.redis.SetEX(r.Context(), s.sessionStateKey(state.SessionID), string(payload), time.Duration(ttlSeconds)*time.Second)
+	return nil
+}
+
+func (s *Server) deleteSessionState(r *http.Request, sessionID string) error {
+	s.sessionFallbackMu.Lock()
+	delete(s.sessionFallback, sessionID)
+	s.sessionFallbackMu.Unlock()
+
+	if s.redis == nil {
+		return nil
+	}
+	if err := s.redis.Del(r.Context(), s.sessionStateKey(sessionID)); err != nil {
+		return err
+	}
 	return nil
 }
 
