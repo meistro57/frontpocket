@@ -1,0 +1,47 @@
+services:
+  frontpocket-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: frontpocket-api
+    env_file:
+      - .env
+    ports:
+      - "8088:8088"
+    depends_on:
+      - qdrant
+      - redis
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: frontpocket-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: frontpocket-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.9.6
+    container_name: frontpocket-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  redis_data:
+  ollama_data:

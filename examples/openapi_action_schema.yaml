@@ -1,0 +1,70 @@
+openapi: 3.1.0
+info:
+  title: FrontPocket API
+  version: 0.1.0
+  description: Source-backed memory retrieval API for FrontPocket.
+servers:
+  - url: http://localhost:8088
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health status
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  qdrant:
+                    type: string
+                  redis:
+                    type: string
+                  version:
+                    type: string
+  /memory/search:
+    post:
+      operationId: searchMemory
+      summary: Search memory records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+      responses:
+        '200':
+          description: Search results
+  /memory/context-pack:
+    post:
+      operationId: buildContextPack
+      summary: Build a context pack from query and filters
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+      responses:
+        '200':
+          description: Context pack response
