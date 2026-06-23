@@ -242,6 +242,93 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 	return results, nil
 }
 
+func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilters) (memory.MemoryStats, error) {
+	if strings.TrimSpace(s.collection) == "" {
+		if s.fallback != nil {
+			return s.fallback.Stats(ctx, filters)
+		}
+		return memory.MemoryStats{}, fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+
+	stats := memory.MemoryStats{
+		ByKind:    make(map[string]int),
+		BySpeaker: make(map[string]int),
+		ByProject: make(map[string]int),
+	}
+
+	var offset any
+	lastOffset := ""
+	for {
+		body := map[string]any{
+			"limit":        256,
+			"with_payload": true,
+			"with_vector":  false,
+		}
+		if filter := toQdrantFilter(filters); filter != nil {
+			body["filter"] = filter
+		}
+		if offset != nil {
+			body["offset"] = offset
+		}
+
+		var response struct {
+			Result struct {
+				Points []struct {
+					Payload map[string]any `json:"payload"`
+				} `json:"points"`
+				NextPageOffset any `json:"next_page_offset"`
+			} `json:"result"`
+		}
+
+		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/scroll", s.collection), body, &response)
+		if err != nil {
+			if status == http.StatusNotFound {
+				if s.fallback != nil {
+					return s.fallback.Stats(ctx, filters)
+				}
+				return memory.MemoryStats{}, nil
+			}
+			if s.fallback != nil {
+				return s.fallback.Stats(ctx, filters)
+			}
+			return memory.MemoryStats{}, err
+		}
+
+		for _, point := range response.Result.Points {
+			stats.Total++
+			if kind := strings.TrimSpace(asString(point.Payload["memory_kind"])); kind != "" {
+				stats.ByKind[kind]++
+			}
+			if speaker := strings.TrimSpace(asString(point.Payload["speaker"])); speaker != "" {
+				stats.BySpeaker[speaker]++
+			}
+			if project := strings.TrimSpace(asString(point.Payload["project"])); project != "" {
+				stats.ByProject[project]++
+			}
+		}
+
+		nextOffset := response.Result.NextPageOffset
+		if nextOffset == nil {
+			break
+		}
+		nextOffsetRaw := fmt.Sprintf("%v", nextOffset)
+		if nextOffsetRaw == "" || nextOffsetRaw == lastOffset {
+			break
+		}
+		lastOffset = nextOffsetRaw
+		offset = nextOffset
+		if len(response.Result.Points) == 0 {
+			break
+		}
+	}
+
+	if stats.Total == 0 && s.fallback != nil {
+		return s.fallback.Stats(ctx, filters)
+	}
+
+	return stats, nil
+}
+
 func (s *QdrantMemoryStore) ensureCollection(ctx context.Context, dims int) error {
 	if s.collection == "" {
 		return fmt.Errorf("QDRANT_COLLECTION is required")

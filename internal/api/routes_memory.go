@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/meistro57/frontpocket/internal/memory"
 )
@@ -153,6 +154,114 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.memoryStore.Stats(r.Context(), statsFiltersFromQuery(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			Code:    "STATS_FAILED",
+			Message: "Memory stats lookup failed.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
+	var req memory.SessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "INVALID_REQUEST",
+			Message: "Request body must be valid JSON.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	if req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "VALIDATION_ERROR",
+			Message: "session_id is required.",
+		})
+		return
+	}
+
+	if req.LoadOnly {
+		state, found, err := s.getSessionState(r, req.SessionID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+				Code:    "SESSION_FAILED",
+				Message: "Session lookup failed.",
+				Detail:  err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, memory.SessionResponse{Found: found, State: state})
+		return
+	}
+
+	state := memory.SessionState{
+		SessionID:       req.SessionID,
+		Project:         strings.TrimSpace(req.Project),
+		ActiveSummary:   strings.TrimSpace(req.ActiveSummary),
+		RecentMemoryIDs: cleanStrings(req.RecentMemoryIDs),
+		Metadata:        req.Metadata,
+		UpdatedAt:       time.Now().UTC(),
+	}
+
+	ttl := req.TTLSeconds
+	if ttl <= 0 {
+		ttl = int(s.defaultSessionTTL.Seconds())
+	}
+	if ttl <= 0 {
+		ttl = 3600
+	}
+
+	if err := s.setSessionState(r, state, ttl); err != nil {
+		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			Code:    "SESSION_FAILED",
+			Message: "Session update failed.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: true, State: &state})
+}
+
+func statsFiltersFromQuery(r *http.Request) memory.SearchFilters {
+	query := r.URL.Query()
+	filters := memory.SearchFilters{
+		Project:        strings.TrimSpace(query.Get("project")),
+		MemoryKind:     strings.TrimSpace(query.Get("memory_kind")),
+		Speaker:        strings.TrimSpace(query.Get("speaker")),
+		SourceType:     strings.TrimSpace(query.Get("source_type")),
+		ConversationID: strings.TrimSpace(query.Get("conversation_id")),
+	}
+
+	tags := make([]string, 0)
+	for _, raw := range query["tag"] {
+		for _, tag := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(tag)
+			if trimmed != "" {
+				tags = append(tags, trimmed)
+			}
+		}
+	}
+	for _, tag := range strings.Split(query.Get("tags"), ",") {
+		trimmed := strings.TrimSpace(tag)
+		if trimmed != "" {
+			tags = append(tags, trimmed)
+		}
+	}
+	if len(tags) > 0 {
+		filters.Tags = tags
+	}
+
+	return filters
+}
+
 func (s *Server) clampLimit(limit int) int {
 	if limit <= 0 {
 		return s.defaultSearch
@@ -229,6 +338,73 @@ func (s *Server) searchResultCacheKey(req memory.SearchRequest) string {
 	encoded, _ := json.Marshal(req)
 	sum := sha256.Sum256(encoded)
 	return fmt.Sprintf("%s:search:%s", prefix, hex.EncodeToString(sum[:]))
+}
+
+func (s *Server) sessionStateKey(sessionID string) string {
+	prefix := s.searchCacheKey
+	if prefix == "" {
+		prefix = "frontpocket"
+	}
+	return fmt.Sprintf("%s:session:%s", prefix, sessionID)
+}
+
+func (s *Server) getSessionState(r *http.Request, sessionID string) (*memory.SessionState, bool, error) {
+	key := s.sessionStateKey(sessionID)
+	if s.redis != nil {
+		cached, found, err := s.redis.Get(r.Context(), key)
+		if err == nil && found {
+			var state memory.SessionState
+			if unmarshalErr := json.Unmarshal([]byte(cached), &state); unmarshalErr == nil {
+				s.sessionFallbackMu.Lock()
+				s.sessionFallback[sessionID] = state
+				s.sessionFallbackMu.Unlock()
+				return &state, true, nil
+			}
+		}
+	}
+
+	s.sessionFallbackMu.RLock()
+	fallbackState, ok := s.sessionFallback[sessionID]
+	s.sessionFallbackMu.RUnlock()
+	if !ok {
+		return nil, false, nil
+	}
+	state := fallbackState
+	return &state, true, nil
+}
+
+func (s *Server) setSessionState(r *http.Request, state memory.SessionState, ttlSeconds int) error {
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	s.sessionFallbackMu.Lock()
+	s.sessionFallback[state.SessionID] = state
+	s.sessionFallbackMu.Unlock()
+
+	if s.redis == nil {
+		return nil
+	}
+	_ = s.redis.SetEX(r.Context(), s.sessionStateKey(state.SessionID), string(payload), time.Duration(ttlSeconds)*time.Second)
+	return nil
+}
+
+func cleanStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

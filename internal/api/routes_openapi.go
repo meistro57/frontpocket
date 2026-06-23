@@ -31,6 +31,18 @@ func (s *Server) openAPISpec() map[string]any {
 					"summary":     "Health status",
 				},
 			},
+			"/memory/stats": map[string]any{
+				"get": map[string]any{
+					"operationId": "getMemoryStats",
+					"summary":     "Get aggregated memory stats",
+				},
+			},
+			"/memory/session": map[string]any{
+				"post": map[string]any{
+					"operationId": "upsertOrLoadSessionState",
+					"summary":     "Create, update, or load session state",
+				},
+			},
 			"/memory/search": map[string]any{
 				"post": map[string]any{
 					"operationId": "searchMemory",

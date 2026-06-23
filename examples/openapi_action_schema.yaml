@@ -33,6 +33,125 @@ paths:
       responses:
         '200':
           description: OpenAPI schema
+  /memory/stats:
+    get:
+      operationId: getMemoryStats
+      summary: Get aggregated memory stats
+      parameters:
+        - in: query
+          name: project
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: memory_kind
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: speaker
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: source_type
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: conversation_id
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: tags
+          required: false
+          schema:
+            type: string
+            description: Comma-separated tags.
+      responses:
+        '200':
+          description: Aggregated memory statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  by_kind:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  by_speaker:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  by_project:
+                    type: object
+                    additionalProperties:
+                      type: integer
+  /memory/session:
+    post:
+      operationId: upsertOrLoadSessionState
+      summary: Create, update, or load session state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id:
+                  type: string
+                project:
+                  type: string
+                active_summary:
+                  type: string
+                recent_memory_ids:
+                  type: array
+                  items:
+                    type: string
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: string
+                ttl_seconds:
+                  type: integer
+                  minimum: 1
+                load_only:
+                  type: boolean
+      responses:
+        '200':
+          description: Session state response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  found:
+                    type: boolean
+                  state:
+                    type: object
+                    properties:
+                      session_id:
+                        type: string
+                      project:
+                        type: string
+                      active_summary:
+                        type: string
+                      recent_memory_ids:
+                        type: array
+                        items:
+                          type: string
+                      metadata:
+                        type: object
+                        additionalProperties:
+                          type: string
+                      updated_at:
+                        type: string
+                        format: date-time
   /memory/search:
     post:
       operationId: searchMemory

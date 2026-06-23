@@ -4,97 +4,52 @@
 
 **Source-backed memory for AI companions.**
 
-FrontPocket is a local-first memory engine for AI companions, agents, and creative workflows.
+<p>
+  <img src="docs/assets/badge-local-first.svg" alt="Local-first" />
+  <img src="docs/assets/badge-go-api.svg" alt="Go API" />
+  <img src="docs/assets/badge-qdrant.svg" alt="Qdrant" />
+  <img src="docs/assets/badge-redis.svg" alt="Redis" />
+  <img src="docs/assets/badge-v010.svg" alt="Version 0.1.0" />
+</p>
 
-It gives your assistant a searchable, source-backed way to recall past conversations, project context, preferences, decisions, and long-running threads without pretending to know things it cannot verify.
+FrontPocket is a local-first memory engine for AI companions, agents, and creative workflows.
+It gives your assistant a searchable, source-backed way to recall conversations, project context, preferences, and decisions without pretending to know things it cannot verify.
 
 No crystal ball. Just retrieval with receipts.
 
-FrontPocket uses a **Go HTTP API** in front of **Qdrant** (long-term semantic memory) and **Redis** (working/session memory).
-
-Current version: **0.1.0**
-
 ---
 
-## Why FrontPocket
+## At a glance
 
-- Keeps recall grounded in source metadata.
-- Prioritizes local-first defaults.
-- Retrieves what matters now instead of prompt-stuffing everything.
-- Stays practical: boring architecture, useful outcomes.
+- **Architecture:** Go HTTP API in front of Qdrant (long-term semantic memory) and Redis (working/session memory).
+- **Retrieval endpoints:** search and context-pack with source metadata.
+- **Operational endpoints:** memory stats and session state for trusted usage.
+- **OpenAPI support:** served at `GET /openapi.json` for integrations.
 
----
-
-## Current Status
-
-FrontPocket has a working Go-first foundation with:
-
-- Go module + command entrypoint (`cmd/frontpocket/main.go`)
-- Config loading from environment (`internal/config`)
-- HTTP API server + API key middleware (`internal/api`)
-- Memory ingest/search/context-pack handlers
-- JSONL parser + chunking (`internal/memory`)
-- Ollama/OpenAI/OpenRouter HTTP embedders (`internal/embed`)
-- Qdrant-backed memory store with vector-size validation (`internal/store`)
-- Redis-backed search caching (`internal/store` + `internal/api`)
-- Dockerfile + Docker Compose + `.env.example`
-
----
-
-## API Endpoints
-
-Implemented endpoints:
+## API endpoints
 
 ```text
 GET  /health
 GET  /openapi.json
+GET  /memory/stats
+POST /memory/session
 POST /memory/ingest/chat
 POST /memory/search
 POST /memory/context-pack
 ```
 
-Example search request:
+Public-safe recall surface remains:
 
-```json
-{
-  "query": "What did we decide FrontPocket is?",
-  "limit": 5,
-  "filters": {
-    "project": "FrontPocket"
-  }
-}
-```
-
-Example search response:
-
-```json
-{
-  "query": "What did we decide FrontPocket is?",
-  "results": [
-    {
-      "memory_id": "conv_1_turn_001_chunk_001",
-      "conversation_id": "conv_1",
-      "source_title": "Planning Chat",
-      "source_type": "chat_export",
-      "timestamp": "2026-06-22T11:13:00Z",
-      "speaker": "user",
-      "project": "FrontPocket",
-      "memory_kind": "project_context",
-      "summary": "FrontPocket is a local-first, source-backed memory layer in Go.",
-      "source_quote": "FrontPocket is a local-first, source-backed memory layer in Go.",
-      "text": "FrontPocket is a local-first, source-backed memory layer in Go.",
-      "score": 1,
-      "embedding_provider": "ollama",
-      "embedding_model": "nomic-embed-text",
-      "embedding_dimensions": 768
-    }
-  ]
-}
+```text
+GET  /health
+GET  /openapi.json
+POST /memory/search
+POST /memory/context-pack
 ```
 
 ---
 
-## Quick Start
+## Quick start
 
 ### 1) Configure
 
@@ -131,13 +86,13 @@ Expected response:
 }
 ```
 
-OpenAPI schema:
+### 5) OpenAPI schema
 
 ```bash
 curl http://localhost:8088/openapi.json
 ```
 
-### 5) Ingest a chat sample
+### 6) Ingest a chat sample
 
 ```bash
 curl -X POST http://localhost:8088/memory/ingest/chat \
@@ -156,7 +111,7 @@ curl -X POST http://localhost:8088/memory/ingest/chat \
   }'
 ```
 
-### 6) Search memory
+### 7) Search memory
 
 ```bash
 curl -X POST http://localhost:8088/memory/search \
@@ -164,11 +119,48 @@ curl -X POST http://localhost:8088/memory/search \
   -d '{"query":"source-backed Go memory","limit":5}'
 ```
 
+### 8) View memory stats
+
+```bash
+curl 'http://localhost:8088/memory/stats?project=FrontPocket'
+```
+
+### 9) Save session state
+
+```bash
+curl -X POST http://localhost:8088/memory/session \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "session_id":"frontpocket-dev",
+    "project":"FrontPocket",
+    "active_summary":"Implementing memory stats and session APIs.",
+    "recent_memory_ids":["conv_1_turn_001_chunk_001"]
+  }'
+```
+
 Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce repeated vector lookups.
 
 ---
 
-## Local Development
+## Examples
+
+- Request samples: `examples/search_request.json`
+- OpenAPI action schema sample: `examples/openapi_action_schema.yaml`
+- JSONL sample import: `examples/chat_export_sample.jsonl`
+
+## Docs
+
+- `docs/getting-started.md`
+- `docs/architecture.md`
+- `docs/memory-model.md`
+- `docs/providers.md`
+- `docs/privacy.md`
+- `docs/local-first.md`
+- `docs/future-gpt-action.md`
+
+---
+
+## Local development
 
 Run tests:
 
@@ -176,7 +168,7 @@ Run tests:
 go test ./...
 ```
 
-CI tests run automatically on every push and pull request via `.github/workflows/test.yml`.
+CI runs on every push and pull request through `.github/workflows/test.yml`.
 
 Run API directly:
 
@@ -192,7 +184,7 @@ go run ./cmd/frontpocket --version
 
 ---
 
-## Project Direction
+## Project direction
 
 FrontPocket remains:
 

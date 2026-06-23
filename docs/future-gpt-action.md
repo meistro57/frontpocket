@@ -9,6 +9,11 @@ Planned public-safe surface:
 - `POST /memory/search`
 - `POST /memory/context-pack`
 
+Operational endpoints (keep private or trusted-only):
+
+- `GET /memory/stats`
+- `POST /memory/session`
+
 Admin and mutation endpoints should remain private.
 
 The service now exposes `/openapi.json` for schema discovery and Action wiring.

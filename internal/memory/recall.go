@@ -10,6 +10,7 @@ import (
 type MemoryStore interface {
 	Upsert(ctx context.Context, points []MemoryPoint) error
 	Search(ctx context.Context, req SearchRequest) ([]SearchResult, error)
+	Stats(ctx context.Context, filters SearchFilters) (MemoryStats, error)
 }
 
 type InMemoryStore struct {
@@ -103,6 +104,37 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 	}
 
 	return results, nil
+}
+
+func (s *InMemoryStore) Stats(_ context.Context, filters SearchFilters) (MemoryStats, error) {
+	s.mu.RLock()
+	points := append([]MemoryPoint(nil), s.points...)
+	s.mu.RUnlock()
+
+	stats := MemoryStats{
+		ByKind:    make(map[string]int),
+		BySpeaker: make(map[string]int),
+		ByProject: make(map[string]int),
+	}
+
+	for _, point := range points {
+		if !matchesFilters(point, filters) {
+			continue
+		}
+		stats.Total++
+
+		if kind := strings.TrimSpace(point.MemoryKind); kind != "" {
+			stats.ByKind[kind]++
+		}
+		if speaker := strings.TrimSpace(point.Speaker); speaker != "" {
+			stats.BySpeaker[speaker]++
+		}
+		if project := strings.TrimSpace(point.Project); project != "" {
+			stats.ByProject[project]++
+		}
+	}
+
+	return stats, nil
 }
 
 func scoreText(query, text string) float64 {

@@ -71,6 +71,12 @@ func TestOpenAPIEndpoint(t *testing.T) {
 	if _, ok := paths["/memory/search"]; !ok {
 		t.Fatal("/memory/search missing from openapi paths")
 	}
+	if _, ok := paths["/memory/stats"]; !ok {
+		t.Fatal("/memory/stats missing from openapi paths")
+	}
+	if _, ok := paths["/memory/session"]; !ok {
+		t.Fatal("/memory/session missing from openapi paths")
+	}
 	if _, ok := paths["/memory/ingest/chat"]; !ok {
 		t.Fatal("/memory/ingest/chat missing from openapi paths")
 	}

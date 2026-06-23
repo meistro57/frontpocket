@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/meistro57/frontpocket/internal/config"
@@ -15,19 +16,22 @@ import (
 )
 
 type Server struct {
-	cfg            config.Config
-	logger         *slog.Logger
-	mux            *http.ServeMux
-	qdrant         *store.QdrantClient
-	redis          *store.RedisClient
-	memoryStore    memory.MemoryStore
-	ingestor       memory.Ingestor
-	contextPacker  memory.ContextPacker
-	defaultSearch  int
-	maxSearch      int
-	minSearchScore float64
-	searchCacheTTL time.Duration
-	searchCacheKey string
+	cfg               config.Config
+	logger            *slog.Logger
+	mux               *http.ServeMux
+	qdrant            *store.QdrantClient
+	redis             *store.RedisClient
+	memoryStore       memory.MemoryStore
+	ingestor          memory.Ingestor
+	contextPacker     memory.ContextPacker
+	defaultSearch     int
+	maxSearch         int
+	minSearchScore    float64
+	searchCacheTTL    time.Duration
+	searchCacheKey    string
+	sessionFallbackMu sync.RWMutex
+	sessionFallback   map[string]memory.SessionState
+	defaultSessionTTL time.Duration
 }
 
 func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -73,19 +77,21 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:            cfg,
-		logger:         logger,
-		mux:            http.NewServeMux(),
-		qdrant:         qdrant,
-		redis:          redis,
-		memoryStore:    memStore,
-		ingestor:       ingestor,
-		contextPacker:  memory.ContextPacker{Store: memStore},
-		defaultSearch:  cfg.Search.DefaultLimit,
-		maxSearch:      cfg.Search.MaxLimit,
-		minSearchScore: cfg.Search.MinScore,
-		searchCacheTTL: time.Duration(cfg.Search.CacheTTLSeconds) * time.Second,
-		searchCacheKey: strings.TrimSpace(cfg.Redis.KeyPrefix),
+		cfg:               cfg,
+		logger:            logger,
+		mux:               http.NewServeMux(),
+		qdrant:            qdrant,
+		redis:             redis,
+		memoryStore:       memStore,
+		ingestor:          ingestor,
+		contextPacker:     memory.ContextPacker{Store: memStore},
+		defaultSearch:     cfg.Search.DefaultLimit,
+		maxSearch:         cfg.Search.MaxLimit,
+		minSearchScore:    cfg.Search.MinScore,
+		searchCacheTTL:    time.Duration(cfg.Search.CacheTTLSeconds) * time.Second,
+		searchCacheKey:    strings.TrimSpace(cfg.Redis.KeyPrefix),
+		sessionFallback:   make(map[string]memory.SessionState),
+		defaultSessionTTL: time.Hour,
 	}
 
 	s.registerRoutes()
@@ -133,6 +139,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /memory/ingest/chat", s.handleMemoryIngest)
 	s.mux.HandleFunc("POST /memory/search", s.handleMemorySearch)
 	s.mux.HandleFunc("POST /memory/context-pack", s.handleContextPack)
+	s.mux.HandleFunc("GET /memory/stats", s.handleMemoryStats)
+	s.mux.HandleFunc("POST /memory/session", s.handleMemorySession)
 }
 
 func selectEmbedder(cfg config.Config) (embed.Embedder, error) {

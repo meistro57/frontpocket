@@ -30,7 +30,21 @@ curl http://localhost:8088/health
 curl http://localhost:8088/openapi.json
 ```
 
-## 6) Run tests
+## 6) Check memory stats
+
+```bash
+curl 'http://localhost:8088/memory/stats?project=FrontPocket'
+```
+
+## 7) Save session state
+
+```bash
+curl -X POST http://localhost:8088/memory/session \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"frontpocket-dev","project":"FrontPocket","active_summary":"Working on memory endpoints"}'
+```
+
+## 8) Run tests
 
 ```bash
 go test ./...

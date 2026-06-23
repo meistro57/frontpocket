@@ -111,6 +111,37 @@ type IngestChatResponse struct {
 	MemoryIDs     []string `json:"memory_ids"`
 }
 
+type MemoryStats struct {
+	Total     int            `json:"total"`
+	ByKind    map[string]int `json:"by_kind,omitempty"`
+	BySpeaker map[string]int `json:"by_speaker,omitempty"`
+	ByProject map[string]int `json:"by_project,omitempty"`
+}
+
+type SessionRequest struct {
+	SessionID       string            `json:"session_id"`
+	Project         string            `json:"project,omitempty"`
+	ActiveSummary   string            `json:"active_summary,omitempty"`
+	RecentMemoryIDs []string          `json:"recent_memory_ids,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	TTLSeconds      int               `json:"ttl_seconds,omitempty"`
+	LoadOnly        bool              `json:"load_only,omitempty"`
+}
+
+type SessionState struct {
+	SessionID       string            `json:"session_id"`
+	Project         string            `json:"project,omitempty"`
+	ActiveSummary   string            `json:"active_summary,omitempty"`
+	RecentMemoryIDs []string          `json:"recent_memory_ids,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+}
+
+type SessionResponse struct {
+	Found bool          `json:"found"`
+	State *SessionState `json:"state,omitempty"`
+}
+
 type ErrorEnvelope struct {
 	Error ErrorBody `json:"error"`
 }
