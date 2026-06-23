@@ -74,6 +74,7 @@ frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 
 Attachments/assets are ingested as attachment-aware records and reported during import.
 Raw export `.zip` files are ignored by git (`*.zip`) by default.
+If you hit an embedding JSON decode error on large imports, rebuild with `./make_all.sh` to pick up the latest embedding response handling.
 
 ## 11) Run tests
 

@@ -196,6 +196,7 @@ frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 
 Attachments and assets are ingested as attachment-aware memory records (including attachment refs) and reported in import stats.
 Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
+Embedding responses now support larger payloads (up to 32MB) to avoid truncated JSON decode errors during large imports.
 
 ## Docs
 

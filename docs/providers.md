@@ -33,6 +33,7 @@ OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
 
 - Providers call their HTTP embedding endpoints directly.
 - Batch embedding is supported for ingestion throughput.
+- Embedding responses are bounded with a 32MB decode limit to prevent truncated JSON errors on large batches.
 - `EMBEDDING_DIMENSIONS` is enforced when set.
 - Dimension mismatches are surfaced as errors instead of silent fallback.
 

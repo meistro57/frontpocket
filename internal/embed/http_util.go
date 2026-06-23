@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const maxEmbeddingResponseBytes int64 = 32 << 20
+
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
 }
@@ -38,9 +40,13 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, headers
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	limited := &io.LimitedReader{R: resp.Body, N: maxEmbeddingResponseBytes + 1}
+	respBody, err := io.ReadAll(limited)
 	if err != nil {
 		return err
+	}
+	if int64(len(respBody)) > maxEmbeddingResponseBytes {
+		return fmt.Errorf("embedding provider response exceeded %d bytes", maxEmbeddingResponseBytes)
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
