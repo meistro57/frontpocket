@@ -26,6 +26,13 @@ paths:
                     type: string
                   version:
                     type: string
+  /openapi.json:
+    get:
+      operationId: getOpenAPISchema
+      summary: Fetch OpenAPI schema
+      responses:
+        '200':
+          description: OpenAPI schema
   /memory/search:
     post:
       operationId: searchMemory

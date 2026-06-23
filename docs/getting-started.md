@@ -24,8 +24,16 @@ docker compose up --build
 curl http://localhost:8088/health
 ```
 
-## 5) Run tests
+## 5) Check OpenAPI schema
+
+```bash
+curl http://localhost:8088/openapi.json
+```
+
+## 6) Run tests
 
 ```bash
 go test ./...
 ```
+
+A matching CI check runs the same suite on GitHub Actions for pushes and pull requests (`.github/workflows/test.yml`).

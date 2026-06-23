@@ -129,6 +129,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 	s.mux.HandleFunc("POST /memory/ingest/chat", s.handleMemoryIngest)
 	s.mux.HandleFunc("POST /memory/search", s.handleMemorySearch)
 	s.mux.HandleFunc("POST /memory/context-pack", s.handleContextPack)

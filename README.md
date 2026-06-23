@@ -47,6 +47,7 @@ Implemented endpoints:
 
 ```text
 GET  /health
+GET  /openapi.json
 POST /memory/ingest/chat
 POST /memory/search
 POST /memory/context-pack
@@ -130,6 +131,12 @@ Expected response:
 }
 ```
 
+OpenAPI schema:
+
+```bash
+curl http://localhost:8088/openapi.json
+```
+
 ### 5) Ingest a chat sample
 
 ```bash
@@ -168,6 +175,8 @@ Run tests:
 ```bash
 go test ./...
 ```
+
+CI tests run automatically on every push and pull request via `.github/workflows/test.yml`.
 
 Run API directly:
 
