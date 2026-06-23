@@ -65,6 +65,13 @@ When running with Docker Compose, `frontpocket-api` uses internal service URLs b
 
 Set these only if you need custom container-to-service routing.
 
+To use Gemini embeddings through OpenRouter:
+
+```env
+EMBEDDING_PROVIDER=openrouter
+OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
+```
+
 ### 2) Build + ensure helper scripts are executable
 
 ```bash
@@ -187,7 +194,7 @@ frontpocket ingest chatgpt ./chatgpt-export.zip --conversation "FrontPocket"
 frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 ```
 
-Attachments and assets are detected and reported in import stats, but they are not ingested yet.
+Attachments and assets are ingested as attachment-aware memory records (including attachment refs) and reported in import stats.
 Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
 
 ## Docs

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,20 +186,44 @@ func TestChatGPTImportDryRunStatsAndUnsupportedContent(t *testing.T) {
 	if result.MessagesFound != 2 {
 		t.Fatalf("expected 2 messages found, got %d", result.MessagesFound)
 	}
-	if result.MessagesAccepted != 1 {
-		t.Fatalf("expected 1 accepted message, got %d", result.MessagesAccepted)
+	if result.MessagesAccepted != 2 {
+		t.Fatalf("expected 2 accepted messages, got %d", result.MessagesAccepted)
 	}
-	if result.MessagesSkipped != 1 {
-		t.Fatalf("expected 1 skipped message, got %d", result.MessagesSkipped)
+	if result.MessagesSkipped != 0 {
+		t.Fatalf("expected 0 skipped messages, got %d", result.MessagesSkipped)
 	}
-	if result.UnsupportedContentTypes["image_asset_pointer"] != 1 {
-		t.Fatalf("expected unsupported content count 1, got %d", result.UnsupportedContentTypes["image_asset_pointer"])
+	if _, ok := result.UnsupportedContentTypes["image_asset_pointer"]; ok {
+		t.Fatalf("expected image_asset_pointer to be supported, got unsupported count %d", result.UnsupportedContentTypes["image_asset_pointer"])
 	}
 	if result.AttachmentsAssetsDetected != 1 {
 		t.Fatalf("expected 1 attachment detected, got %d", result.AttachmentsAssetsDetected)
 	}
-	if result.AttachmentsIngested {
-		t.Fatal("expected attachments ingested to remain false")
+	if !result.AttachmentsIngested {
+		t.Fatal("expected attachments ingested to be true")
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(result.Records))
+	}
+	var attachmentRecord memory.NormalizedMemoryRecord
+	foundAttachmentRecord := false
+	for _, record := range result.Records {
+		if record.Metadata["content_type"] == "image_asset_pointer" {
+			attachmentRecord = record
+			foundAttachmentRecord = true
+			break
+		}
+	}
+	if !foundAttachmentRecord {
+		t.Fatalf("expected one image_asset_pointer record, got %+v", result.Records)
+	}
+	if attachmentRecord.Metadata["attachment_count"] != "1" {
+		t.Fatalf("expected attachment_count 1, got %q", attachmentRecord.Metadata["attachment_count"])
+	}
+	if attachmentRecord.Metadata["attachment_refs"] != "asset-1" {
+		t.Fatalf("expected attachment_refs asset-1, got %q", attachmentRecord.Metadata["attachment_refs"])
+	}
+	if !strings.Contains(attachmentRecord.Text, "attachment_refs: asset-1") {
+		t.Fatalf("expected attachment text to include asset ref, got %q", attachmentRecord.Text)
 	}
 }
 

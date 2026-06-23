@@ -18,6 +18,7 @@ Qdrant (long-term semantic memory)
 - Qdrant and Redis should remain private in non-local deployments.
 - Search responses can be cached in Redis (`SEARCH_CACHE_TTL_SECONDS`).
 - Session state can be cached in Redis via `POST /memory/session` and removed with `DELETE /memory/session`.
+- ChatGPT imports now ingest attachment-aware memory records when attachment refs are present.
 - Qdrant collection dimensions are validated against embedding output.
 
 ## Endpoint groups

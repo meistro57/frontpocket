@@ -70,9 +70,10 @@ type chatGPTNode struct {
 	MessageTime   time.Time
 	MessageCreate string
 	MessageUpdate string
-	HasAttachment bool
-	SupportedText bool
-	HasText       bool
+	HasAttachment  bool
+	AttachmentRefs []string
+	SupportedText  bool
+	HasText        bool
 }
 
 func ParseChatGPTExport(sourcePath string, options ChatGPTImportOptions) (ChatGPTImportResult, error) {
@@ -195,6 +196,10 @@ func ParseChatGPTExport(sourcePath string, options ChatGPTImportOptions) (ChatGP
 				if node.MessageUpdate != "" {
 					metadata["message_update_time"] = node.MessageUpdate
 				}
+				if len(node.AttachmentRefs) > 0 {
+					metadata["attachment_refs"] = strings.Join(node.AttachmentRefs, ",")
+					metadata["attachment_count"] = strconv.Itoa(len(node.AttachmentRefs))
+				}
 
 				timestamp := ""
 				if !node.MessageTime.IsZero() {
@@ -219,6 +224,9 @@ func ParseChatGPTExport(sourcePath string, options ChatGPTImportOptions) (ChatGP
 				}
 
 				records = append(records, record)
+				if node.HasAttachment && (isAttachmentContentType(node.ContentType) || len(node.AttachmentRefs) > 0) {
+					result.AttachmentsIngested = true
+				}
 				result.MessagesAccepted++
 			}
 		}
@@ -512,7 +520,9 @@ func collectMessageNodes(conversation map[string]any) []chatGPTNode {
 		if contentType == "" {
 			contentType = "text"
 		}
-		text, supported := extractMessageText(contentMap, contentType)
+		attachmentRefs := extractAttachmentRefs(nodeMap, messageMap, contentMap)
+		hasAttachment := len(attachmentRefs) > 0 || detectAttachments(nodeMap, messageMap, contentMap)
+		text, supported := extractMessageText(contentMap, contentType, attachmentRefs, hasAttachment)
 		hasText := strings.TrimSpace(text) != ""
 
 		messageCreate := normalizeTimeString(messageMap["create_time"])
@@ -527,18 +537,19 @@ func collectMessageNodes(conversation map[string]any) []chatGPTNode {
 		}
 
 		nodes = append(nodes, chatGPTNode{
-			NodeID:        nodeID,
-			ParentID:      strings.TrimSpace(stringValue(nodeMap["parent"])),
-			MessageID:     strings.TrimSpace(stringValue(messageMap["id"])),
-			Role:          role,
-			ContentType:   contentType,
-			Text:          strings.TrimSpace(text),
-			MessageTime:   messageTime,
-			MessageCreate: messageCreate,
-			MessageUpdate: messageUpdate,
-			HasAttachment: detectAttachments(nodeMap, messageMap, contentMap),
-			SupportedText: supported,
-			HasText:       hasText,
+			NodeID:         nodeID,
+			ParentID:       strings.TrimSpace(stringValue(nodeMap["parent"])),
+			MessageID:      strings.TrimSpace(stringValue(messageMap["id"])),
+			Role:           role,
+			ContentType:    contentType,
+			Text:           strings.TrimSpace(text),
+			MessageTime:    messageTime,
+			MessageCreate:  messageCreate,
+			MessageUpdate:  messageUpdate,
+			HasAttachment:  hasAttachment,
+			AttachmentRefs: attachmentRefs,
+			SupportedText:  supported,
+			HasText:        hasText,
 		})
 	}
 
@@ -561,14 +572,72 @@ func collectMessageNodes(conversation map[string]any) []chatGPTNode {
 	return nodes
 }
 
-func extractMessageText(content map[string]any, contentType string) (string, bool) {
-	if contentType != "text" {
-		return "", false
+func isAttachmentContentType(contentType string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(contentType))
+	return strings.Contains(trimmed, "asset") || strings.Contains(trimmed, "image")
+}
+
+func extractAttachmentRefs(node map[string]any, message map[string]any, content map[string]any) []string {
+	refs := make(map[string]struct{})
+	appendAttachmentRefsFromValue(refs, node["asset_pointer"])
+	appendAttachmentRefsFromValue(refs, node["attachments"])
+	appendAttachmentRefsFromValue(refs, node["assets"])
+	appendAttachmentRefsFromValue(refs, message["asset_pointer"])
+	appendAttachmentRefsFromValue(refs, message["attachments"])
+	appendAttachmentRefsFromValue(refs, message["assets"])
+
+	metadata, _ := message["metadata"].(map[string]any)
+	appendAttachmentRefsFromValue(refs, metadata["asset_pointer"])
+	appendAttachmentRefsFromValue(refs, metadata["attachments"])
+	appendAttachmentRefsFromValue(refs, metadata["assets"])
+
+	parts, _ := content["parts"].([]any)
+	for _, part := range parts {
+		partMap, ok := part.(map[string]any)
+		if !ok {
+			continue
+		}
+		appendAttachmentRefsFromValue(refs, partMap["asset_pointer"])
+		appendAttachmentRefsFromValue(refs, partMap["asset"])
+		appendAttachmentRefsFromValue(refs, partMap["file_id"])
+		appendAttachmentRefsFromValue(refs, partMap["attachments"])
 	}
 
+	out := make([]string, 0, len(refs))
+	for ref := range refs {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func appendAttachmentRefsFromValue(refs map[string]struct{}, value any) {
+	switch v := value.(type) {
+	case nil:
+		return
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed != "" {
+			refs[trimmed] = struct{}{}
+		}
+	case []any:
+		for _, item := range v {
+			appendAttachmentRefsFromValue(refs, item)
+		}
+	case map[string]any:
+		appendAttachmentRefsFromValue(refs, v["asset_pointer"])
+		appendAttachmentRefsFromValue(refs, v["asset"])
+		appendAttachmentRefsFromValue(refs, v["file_id"])
+		appendAttachmentRefsFromValue(refs, v["id"])
+		appendAttachmentRefsFromValue(refs, v["attachments"])
+		appendAttachmentRefsFromValue(refs, v["assets"])
+	}
+}
+
+func extractTextParts(content map[string]any) []string {
 	parts, ok := content["parts"].([]any)
 	if !ok {
-		return "", true
+		return nil
 	}
 
 	lines := make([]string, 0, len(parts))
@@ -583,11 +652,33 @@ func extractMessageText(content map[string]any, contentType string) (string, boo
 		}
 		lines = append(lines, textPart)
 	}
+	return lines
+}
 
-	if len(lines) == 0 {
-		return "", true
+func buildAttachmentText(contentType string, lines []string, refs []string) string {
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, lines...)
+	if len(refs) > 0 {
+		out = append(out, "attachment_refs: "+strings.Join(refs, ", "))
 	}
-	return strings.Join(lines, "\n"), true
+	if len(out) == 0 {
+		out = append(out, "attachment content: "+contentType)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func extractMessageText(content map[string]any, contentType string, attachmentRefs []string, hasAttachment bool) (string, bool) {
+	lines := extractTextParts(content)
+	if contentType == "text" {
+		if len(lines) == 0 {
+			return "", true
+		}
+		return strings.Join(lines, "\n"), true
+	}
+	if isAttachmentContentType(contentType) || hasAttachment {
+		return buildAttachmentText(contentType, lines, attachmentRefs), true
+	}
+	return "", false
 }
 
 func detectAttachments(node map[string]any, message map[string]any, content map[string]any) bool {

@@ -19,6 +19,16 @@ Supported provider choices:
 
 Provider selection is config-driven through `EMBEDDING_PROVIDER`.
 
+## OpenRouter Gemini embedding model
+
+To use Gemini embeddings through OpenRouter:
+
+```env
+EMBEDDING_PROVIDER=openrouter
+OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
+# Leave EMBEDDING_DIMENSIONS empty unless you need strict dimension enforcement.
+```
+
 ## Implementation details
 
 - Providers call their HTTP embedding endpoints directly.

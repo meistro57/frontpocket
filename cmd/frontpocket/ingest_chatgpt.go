@@ -143,7 +143,11 @@ func printImportSummary(result memory.ChatGPTImportResult) {
 		fmt.Printf("unsupported content types: %s\n", strings.Join(pairs, ", "))
 	}
 	fmt.Printf("attachments/assets detected: %d\n", result.AttachmentsAssetsDetected)
-	fmt.Printf("attachments ingested: no\n")
+	attachmentsIngested := "no"
+	if result.AttachmentsIngested {
+		attachmentsIngested = "yes"
+	}
+	fmt.Printf("attachments ingested: %s\n", attachmentsIngested)
 }
 
 func normalizeIngestChatGPTArgs(args []string) ([]string, string) {

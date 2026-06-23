@@ -6,6 +6,13 @@
 cp .env.example .env
 ```
 
+To use Gemini embeddings through OpenRouter, set:
+
+```env
+EMBEDDING_PROVIDER=openrouter
+OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
+```
+
 ## 2) Build + ensure helper scripts are executable
 
 ```bash
@@ -65,7 +72,7 @@ frontpocket ingest chatgpt ./chatgpt-export.zip --out data/processed/chatgpt_nor
 frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 ```
 
-Attachments/assets are detected and reported during import, but they are not ingested yet.
+Attachments/assets are ingested as attachment-aware records and reported during import.
 Raw export `.zip` files are ignored by git (`*.zip`) by default.
 
 ## 11) Run tests

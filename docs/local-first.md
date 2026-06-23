@@ -26,4 +26,4 @@ If Qdrant or Redis are missing, run:
 
 The installer checks what is already available and only starts missing services.
 
-Cloud embedding providers remain optional and explicitly configured.
+Cloud embedding providers remain optional and explicitly configured (including `google/gemini-embedding-2-preview` through OpenRouter).
