@@ -12,6 +12,12 @@ REDIS_URL=redis://redis:6379/0
 
 ## Dependency bootstrap
 
+First, run the root build helper:
+
+```bash
+./make_all.sh
+```
+
 If Qdrant or Redis are missing, run:
 
 ```bash

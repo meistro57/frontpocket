@@ -32,3 +32,4 @@ redis_data/
 tmp/
 temp/
 .cache/
+*.zip

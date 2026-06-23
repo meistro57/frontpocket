@@ -58,19 +58,32 @@ POST /memory/context-pack
 cp .env.example .env
 ```
 
-### 2) Install Qdrant + Redis if missing
+When running with Docker Compose, `frontpocket-api` uses internal service URLs by default:
+- `DOCKER_QDRANT_URL` (default `http://qdrant:6333`)
+- `DOCKER_REDIS_URL` (default `redis://redis:6379/0`)
+- `DOCKER_OLLAMA_BASE_URL` (default `http://ollama:11434`)
+
+Set these only if you need custom container-to-service routing.
+
+### 2) Build + ensure helper scripts are executable
+
+```bash
+./make_all.sh
+```
+
+### 3) Install Qdrant + Redis if missing
 
 ```bash
 ./scripts/install_qdrant_redis.sh
 ```
 
-### 3) Run the stack
+### 4) Run the stack
 
 ```bash
 docker compose up --build
 ```
 
-### 4) Health check
+### 5) Health check
 
 ```bash
 curl http://localhost:8088/health
@@ -87,13 +100,13 @@ Expected response:
 }
 ```
 
-### 5) OpenAPI schema
+### 6) OpenAPI schema
 
 ```bash
 curl http://localhost:8088/openapi.json
 ```
 
-### 6) Ingest a chat sample
+### 7) Ingest a chat sample
 
 ```bash
 curl -X POST http://localhost:8088/memory/ingest/chat \
@@ -112,7 +125,7 @@ curl -X POST http://localhost:8088/memory/ingest/chat \
   }'
 ```
 
-### 7) Search memory
+### 8) Search memory
 
 ```bash
 curl -X POST http://localhost:8088/memory/search \
@@ -120,13 +133,13 @@ curl -X POST http://localhost:8088/memory/search \
   -d '{"query":"source-backed Go memory","limit":5}'
 ```
 
-### 8) View memory stats
+### 9) View memory stats
 
 ```bash
 curl 'http://localhost:8088/memory/stats?project=FrontPocket'
 ```
 
-### 9) Save session state
+### 10) Save session state
 
 ```bash
 curl -X POST http://localhost:8088/memory/session \
@@ -153,10 +166,17 @@ Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce re
 
 FrontPocket can parse ChatGPT exports from either a `.zip` file or an extracted folder and normalize them into JSONL-compatible records.
 
+### Ingest directly from a `.zip`
+
+1. Download your ChatGPT export zip to your machine.
+2. Run a dry-run first to verify parsing stats.
+3. Re-run without `--dry-run` to write to memory storage.
+4. Use `--out` if you also want normalized JSONL on disk.
+
 ```bash
 frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run
 frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket
-frontpocket ingest chatgpt ./chatgpt-export.zip --out data/processed/chatgpt_normalized.jsonl
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --out data/processed/chatgpt_normalized.jsonl
 ```
 
 Additional filters:
@@ -168,6 +188,7 @@ frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 ```
 
 Attachments and assets are detected and reported in import stats, but they are not ingested yet.
+Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
 
 ## Docs
 
