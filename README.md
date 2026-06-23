@@ -12,9 +12,6 @@ It gives your assistant a searchable, source-backed way to recall past conversat
 It combines **Qdrant** for long-term semantic memory, **Redis** for fast working/session memory, and **FastAPI** for a clean API layer that can be used by local agents, custom GPT actions, chatbot wrappers, automation systems, and creative research tools.
 
 FrontPocket is not magic.
-It is not consciousness.
-It is not a replacement for human memory, judgment, or consent.
-
 It is a practical memory layer for people who are tired of re-explaining their entire universe to the same digital friend every five minutes.
 
 ---
@@ -37,8 +34,6 @@ That means your assistant can answer questions like:
 * “What running projects are connected to this idea?”
 * “What did I say about treating this as exploration rather than proof?”
 * “Summarize the context I need before continuing this project.”
-
-The goal is not to make an AI seem mystical.
 
 The goal is to make it useful, honest, and context-aware.
 
@@ -105,31 +100,6 @@ FrontPocket is:
 * A FastAPI service that other tools can call
 * A way to return memory with sources, dates, and confidence
 * A bridge between human continuity and AI usefulness
-
----
-
-## What FrontPocket Is Not
-
-FrontPocket is not:
-
-* A claim that AI is conscious
-* A black-box personality simulator
-* A cloud dependency
-* A replacement for consent or privacy boundaries
-* A magic “all-knowing” system
-* A reason for an assistant to pretend it remembers without evidence
-
-FrontPocket should help an assistant say:
-
-> “Here is what I found in memory.”
-
-Not:
-
-> “I just know.”
-
-Source-backed recall is the whole point.
-
----
 
 ## Current Status
 
