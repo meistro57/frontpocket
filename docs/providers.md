@@ -34,8 +34,19 @@ OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
 - Providers call their HTTP embedding endpoints directly.
 - Batch embedding is supported for ingestion throughput.
 - Embedding responses are bounded with a 32MB decode limit to prevent truncated JSON errors on large batches.
+- Qdrant upserts use UUID-compatible point IDs and keep the original `memory_id` in payload metadata.
 - `EMBEDDING_DIMENSIONS` is enforced when set.
 - Dimension mismatches are surfaced as errors instead of silent fallback.
+
+## Troubleshooting OpenRouter ingest with Qdrant
+
+If OpenRouter usage appears on openrouter.ai but Qdrant stays empty, check for this error in FrontPocket logs:
+
+```text
+Format error in JSON body: value <memory_id> is not a valid point ID
+```
+
+That indicates Qdrant rejected a non-UUID point ID on insert. Current FrontPocket builds convert memory IDs to deterministic UUID point IDs during upsert and preserve `memory_id` in payload metadata.
 
 ## Required credentials
 

@@ -75,6 +75,7 @@ frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 Attachments/assets are ingested as attachment-aware records and reported during import.
 Raw export `.zip` files are ignored by git (`*.zip`) by default.
 If you hit an embedding JSON decode error on large imports, rebuild with `./make_all.sh` to pick up the latest embedding response handling.
+If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest to pick up UUID-compatible Qdrant point IDs (look for `not a valid point ID` in logs when using older binaries).
 
 ## 11) Run tests
 

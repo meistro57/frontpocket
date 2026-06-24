@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -153,7 +155,7 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 		}
 
 		payload.Points = append(payload.Points, qdrantPoint{
-			ID:      point.MemoryID,
+			ID:      qdrantPointID(point.MemoryID),
 			Vector:  vector,
 			Payload: toQdrantPayload(point),
 		})
@@ -411,6 +413,46 @@ func parseVectorSize(raw json.RawMessage, vectorName string) int {
 		}
 	}
 	return 0
+}
+
+func qdrantPointID(memoryID string) string {
+	trimmed := strings.TrimSpace(memoryID)
+	if isUUID(trimmed) {
+		return strings.ToLower(trimmed)
+	}
+
+	hash := md5.Sum([]byte(trimmed))
+	hash[6] = (hash[6] & 0x0f) | 0x50
+	hash[8] = (hash[8] & 0x3f) | 0x80
+	return formatUUID(hash)
+}
+
+func formatUUID(b [16]byte) string {
+	hexValue := hex.EncodeToString(b[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hexValue[0:8], hexValue[8:12], hexValue[12:16], hexValue[16:20], hexValue[20:32])
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for idx, r := range value {
+		switch idx {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !isHexDigit(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
 func toQdrantFilter(filters memory.SearchFilters) map[string]any {
