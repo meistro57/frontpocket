@@ -17,6 +17,7 @@ dist/
 *.test
 *.out
 coverage.out
+/frontpocket
 
 # Logs
 *.log
@@ -33,3 +34,6 @@ tmp/
 temp/
 .cache/
 *.zip
+
+# Windows alternate-data-stream junk
+*:Zone.Identifier

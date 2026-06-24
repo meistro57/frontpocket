@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -30,9 +29,15 @@ func run(args []string) error {
 	}
 
 	flags := flag.NewFlagSet("frontpocket", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+	flags.SetOutput(os.Stdout)
+	flags.Usage = func() {
+		printRootHelp(flags)
+	}
 	showVersion := flags.Bool("version", false, "print FrontPocket version")
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *showVersion {
@@ -41,6 +46,26 @@ func run(args []string) error {
 	}
 
 	return runServer()
+}
+
+func printRootHelp(flags *flag.FlagSet) {
+	fmt.Fprintln(flags.Output(), "Usage:")
+	fmt.Fprintln(flags.Output(), "  frontpocket [command] [options]")
+	fmt.Fprintln(flags.Output(), "  frontpocket --version")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Commands:")
+	fmt.Fprintln(flags.Output(), "  ingest      Import memory data from supported sources.")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Subcommands:")
+	fmt.Fprintln(flags.Output(), "  ingest chatgpt      Import from a ChatGPT export zip or folder.")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Help:")
+	fmt.Fprintln(flags.Output(), "  frontpocket --help")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt --help")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Options:")
+	flags.PrintDefaults()
 }
 
 func runServer() error {

@@ -58,6 +58,42 @@ func TestRunIngestChatGPTPathBeforeFlagsAndOutFile(t *testing.T) {
 	}
 }
 
+func TestRunIngestCommandHelp(t *testing.T) {
+	output := captureStdout(t, func() {
+		err := runIngestCommand([]string{"--help"})
+		if err != nil {
+			t.Fatalf("runIngestCommand --help failed: %v", err)
+		}
+	})
+	if !strings.Contains(output, "Usage:") {
+		t.Fatalf("expected help output to contain Usage, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Subcommands:") || !strings.Contains(output, "chatgpt      Import from a ChatGPT export zip or folder.") {
+		t.Fatalf("expected help output to contain ingest subcommand reference, got:\n%s", output)
+	}
+	if !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket ingest chatgpt --help") {
+		t.Fatalf("expected help output to contain nested help references, got:\n%s", output)
+	}
+}
+
+func TestRunIngestChatGPTHelp(t *testing.T) {
+	output := captureStdout(t, func() {
+		err := runIngestChatGPT([]string{"--help"})
+		if err != nil {
+			t.Fatalf("runIngestChatGPT --help failed: %v", err)
+		}
+	})
+	if !strings.Contains(output, "Usage:") {
+		t.Fatalf("expected help output to contain Usage, got:\n%s", output)
+	}
+	if !strings.Contains(output, "--dry-run") {
+		t.Fatalf("expected help output to contain flags, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Command Reference:") || !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket ingest chatgpt --help") {
+		t.Fatalf("expected help output to contain command references, got:\n%s", output)
+	}
+}
+
 func writeChatGPTConversationDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

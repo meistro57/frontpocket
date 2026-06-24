@@ -6,6 +6,10 @@ services:
     container_name: frontpocket-api
     env_file:
       - .env
+    environment:
+      QDRANT_URL: ${DOCKER_QDRANT_URL:-http://qdrant:6333}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+      OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-http://ollama:11434}
     ports:
       - "8088:8088"
     depends_on:

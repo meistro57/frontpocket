@@ -194,10 +194,34 @@ frontpocket ingest chatgpt ./chatgpt-export.zip --conversation "FrontPocket"
 frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 ```
 
-Attachments and assets are ingested as attachment-aware memory records (including attachment refs) and reported in import stats.
-Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
-Embedding responses now support larger payloads (up to 32MB) to avoid truncated JSON decode errors during large imports.
-Qdrant writes use UUID-compatible point IDs while preserving original `memory_id` in payload metadata, preventing rejected inserts when source IDs are not UUIDs.
+### Resumable, memory-bounded imports
+
+Large exports are embedded and written to Qdrant in **batches** rather than buffered entirely in memory, so a multi-gigabyte archive won't exhaust RAM. Each batch is flushed on a record boundary as soon as it fills.
+
+Pass `--resume <path>` to track progress in a small JSON journal. If an import is interrupted (crash, `Ctrl-C`, or a transient embedding/store failure), re-running the same command continues from the last committed batch instead of starting over:
+
+```bash
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --resume .frontpocket-progress.json
+# ...interrupted...
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --resume .frontpocket-progress.json  # picks up where it stopped
+```
+
+The journal is keyed to the source, collection, and embedding model, so a stale journal can't silently skip records from a different import. It is removed automatically once the import completes successfully. Because `memory_id`s are deterministic, any re-processed records upsert idempotently.
+
+### CLI help
+
+```bash
+frontpocket --help
+frontpocket ingest --help
+frontpocket ingest chatgpt --help
+```
+
+### Notes
+
+- Attachments and assets are ingested as attachment-aware memory records (including attachment refs) and reported in import stats.
+- Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
+- Embedding responses support larger payloads (up to 32MB) to avoid truncated JSON decode errors during large imports.
+- Qdrant writes use UUID-compatible point IDs while preserving the original `memory_id` in payload metadata, preventing rejected inserts when source IDs are not UUIDs.
 
 ## Docs
 

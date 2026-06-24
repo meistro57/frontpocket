@@ -38,6 +38,11 @@ func ParseJSONL(input string) ([]MessageRecord, error) {
 	return records, nil
 }
 
+// DefaultUpsertBatchSize is the number of memory points flushed to the store at
+// once when an Ingestor does not specify its own BatchSize. It bounds how many
+// embedding vectors are held in memory during a large import.
+const DefaultUpsertBatchSize = 128
+
 type Ingestor struct {
 	Chunker      Chunker
 	Embedder     embed.Embedder
@@ -47,6 +52,42 @@ type Ingestor struct {
 	Project      string
 	MemoryKind   string
 	SpeakerRules SpeakerRules
+	ProgressFn   func(ProgressEvent)
+	// BatchSize controls how many points are upserted per store write. Points
+	// are flushed as soon as the buffer reaches this size so the whole import
+	// is never resident in memory at once. Zero uses DefaultUpsertBatchSize.
+	BatchSize int
+	// Journal, when set, records ingest progress after every successful batch
+	// flush so an interrupted import can be resumed. Records already covered by
+	// the journal are skipped on a subsequent run. Optional.
+	Journal ResumeJournal
+}
+
+// Checkpoint captures how far an ingest has progressed. It is persisted by a
+// ResumeJournal after each batch is durably stored.
+type Checkpoint struct {
+	LastRecordIndex int `json:"last_record_index"`
+	TotalRecords    int `json:"total_records"`
+	ChunksEmbedded  int `json:"chunks_embedded"`
+}
+
+// ResumeJournal persists ingest progress so an interrupted run can continue.
+// Implementations must only report a record as committed once its points have
+// been durably stored.
+type ResumeJournal interface {
+	// LastRecordIndex returns the index of the last fully-ingested record, or
+	// -1 when nothing has been committed yet.
+	LastRecordIndex() int
+	// Commit durably records that every record up to and including
+	// cp.LastRecordIndex has been stored.
+	Commit(cp Checkpoint) error
+}
+
+type ProgressEvent struct {
+	RecordsProcessed int
+	RecordsTotal     int
+	ChunksEmbedded   int
+	Elapsed          time.Duration
 }
 
 type SpeakerRules struct {
@@ -66,8 +107,58 @@ func (i Ingestor) Ingest(ctx context.Context, records []MessageRecord) ([]Memory
 		return nil, nil
 	}
 
-	points := make([]MemoryPoint, 0, len(records))
+	batchSize := i.BatchSize
+	if batchSize <= 0 {
+		batchSize = DefaultUpsertBatchSize
+	}
+
+	// inserted retains the lightweight metadata (IDs) callers report on, while
+	// batch holds the in-flight vectors that get flushed and discarded.
+	inserted := make([]MemoryPoint, 0, len(records))
+	batch := make([]MemoryPoint, 0, batchSize)
+
+	resumeFrom := -1
+	if i.Journal != nil {
+		resumeFrom = i.Journal.LastRecordIndex()
+	}
+
+	start := time.Now()
+	chunksEmbedded := 0
+
+	// flush writes the buffered batch to the store, frees its vectors, and
+	// records progress through throughRecord (the index of the last record
+	// whose points are now fully stored). Flushes happen on record boundaries
+	// so the checkpoint always reflects whole records.
+	flush := func(throughRecord int) error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := i.Store.Upsert(ctx, batch); err != nil {
+			return err
+		}
+		// Keep the metadata for the return value but drop the vectors so the
+		// embeddings for already-stored points don't accumulate in memory.
+		for j := range batch {
+			batch[j].Vector = nil
+			inserted = append(inserted, batch[j])
+		}
+		batch = batch[:0]
+		if i.Journal != nil {
+			if err := i.Journal.Commit(Checkpoint{
+				LastRecordIndex: throughRecord,
+				TotalRecords:    len(records),
+				ChunksEmbedded:  chunksEmbedded,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	for idx, rec := range records {
+		if idx <= resumeFrom {
+			continue
+		}
 		if !i.shouldStoreSpeaker(rec.Speaker) {
 			continue
 		}
@@ -92,6 +183,16 @@ func (i Ingestor) Ingest(ctx context.Context, records []MessageRecord) ([]Memory
 		if len(embeddings) != len(chunks) {
 			return nil, fmt.Errorf("record %d: embedding count mismatch", idx)
 		}
+		chunksEmbedded += len(chunks)
+
+		if i.ProgressFn != nil && (idx+1)%100 == 0 {
+			i.ProgressFn(ProgressEvent{
+				RecordsProcessed: idx + 1,
+				RecordsTotal:     len(records),
+				ChunksEmbedded:   chunksEmbedded,
+				Elapsed:          time.Since(start),
+			})
+		}
 
 		for cidx, chunk := range chunks {
 			point := MemoryPoint{
@@ -112,19 +213,36 @@ func (i Ingestor) Ingest(ctx context.Context, records []MessageRecord) ([]Memory
 				EmbeddingDimensions: len(embeddings[cidx]),
 				Vector:              embeddings[cidx],
 			}
-			points = append(points, point)
+			batch = append(batch, point)
+		}
+
+		// Flush on a record boundary so the journal checkpoint never lands in
+		// the middle of a record's chunks.
+		if len(batch) >= batchSize {
+			if err := flush(idx); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	if len(points) == 0 {
-		return nil, nil
-	}
-
-	if err := i.Store.Upsert(ctx, points); err != nil {
+	if err := flush(len(records) - 1); err != nil {
 		return nil, err
 	}
 
-	return points, nil
+	if len(inserted) == 0 {
+		return nil, nil
+	}
+
+	if i.ProgressFn != nil {
+		i.ProgressFn(ProgressEvent{
+			RecordsProcessed: len(records),
+			RecordsTotal:     len(records),
+			ChunksEmbedded:   chunksEmbedded,
+			Elapsed:          time.Since(start),
+		})
+	}
+
+	return inserted, nil
 }
 
 func (i Ingestor) shouldStoreSpeaker(speaker string) bool {

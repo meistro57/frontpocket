@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,7 +19,11 @@ import (
 
 func runIngestCommand(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("ingest subcommand is required")
+		return fmt.Errorf("ingest subcommand is required (see: frontpocket ingest --help)")
+	}
+	if args[0] == "--help" || args[0] == "-help" || args[0] == "-h" {
+		printIngestHelp(os.Stdout)
+		return nil
 	}
 	if args[0] != "chatgpt" {
 		return fmt.Errorf("unsupported ingest source %q", args[0])
@@ -28,16 +33,23 @@ func runIngestCommand(args []string) error {
 
 func runIngestChatGPT(args []string) error {
 	flags := flag.NewFlagSet("frontpocket ingest chatgpt", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(os.Stdout)
+	flags.Usage = func() {
+		printIngestChatGPTHelp(flags)
+	}
 
 	dryRun := flags.Bool("dry-run", false, "parse and report stats without writing to storage")
 	project := flags.String("project", "", "project label to attach to imported records")
 	since := flags.String("since", "", "only include messages at or after this date (YYYY-MM-DD or RFC3339)")
 	conversation := flags.String("conversation", "", "only include conversations whose title or id contains this value")
 	out := flags.String("out", "", "write normalized JSONL output to this path")
+	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
 
 	normalizedArgs, sourcePath := normalizeIngestChatGPTArgs(args)
 	if err := flags.Parse(normalizedArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -108,12 +120,75 @@ func runIngestChatGPT(args []string) error {
 		return nil
 	}
 
+	ingestor.ProgressFn = func(ev memory.ProgressEvent) {
+		elapsed := ev.Elapsed.Truncate(time.Second)
+		rate := 0.0
+		if ev.Elapsed.Seconds() > 0 {
+			rate = float64(ev.RecordsProcessed) / ev.Elapsed.Seconds()
+		}
+		eta := time.Duration(0)
+		if rate > 0 && ev.RecordsTotal > ev.RecordsProcessed {
+			eta = time.Duration(float64(ev.RecordsTotal-ev.RecordsProcessed)/rate) * time.Second
+		}
+		fmt.Printf("embedding progress: %d/%d records (%d chunks) elapsed=%s eta=%s\n",
+			ev.RecordsProcessed, ev.RecordsTotal, ev.ChunksEmbedded, elapsed, eta)
+	}
+
+	var journal *memory.FileJournal
+	if path := strings.TrimSpace(*resume); path != "" {
+		j, resumed, err := memory.OpenFileJournal(path, memory.JournalMeta{
+			Source:         positionals[0],
+			Collection:     cfg.Qdrant.Collection,
+			EmbeddingModel: ingestor.Embedder.ModelName(),
+		})
+		if err != nil {
+			return err
+		}
+		journal = j
+		ingestor.Journal = j
+		if resumed {
+			fmt.Printf("resume: continuing from record %d (journal %s)\n", j.LastRecordIndex()+1, path)
+		} else {
+			fmt.Printf("resume: tracking progress in %s\n", path)
+		}
+	}
+
 	points, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
 	if err != nil {
 		return fmt.Errorf("parsed %d records but storage ingest failed: %w", len(result.Records), err)
 	}
 	fmt.Printf("storage write: inserted %d memory points\n", len(points))
+
+	if journal != nil {
+		if err := journal.Remove(); err != nil {
+			fmt.Printf("resume: could not remove completed journal: %v\n", err)
+		}
+	}
 	return nil
+}
+
+func printIngestHelp(output *os.File) {
+	fmt.Fprintln(output, "Usage:")
+	fmt.Fprintln(output, "  frontpocket ingest <subcommand> [options]")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Subcommands:")
+	fmt.Fprintln(output, "  chatgpt      Import from a ChatGPT export zip or folder.")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Help:")
+	fmt.Fprintln(output, "  frontpocket ingest --help")
+	fmt.Fprintln(output, "  frontpocket ingest chatgpt --help")
+}
+
+func printIngestChatGPTHelp(flags *flag.FlagSet) {
+	fmt.Fprintln(flags.Output(), "Usage:")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--out <path>] [--resume <path>]")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Command Reference:")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt --help")
+	fmt.Fprintln(flags.Output())
+	fmt.Fprintln(flags.Output(), "Options:")
+	flags.PrintDefaults()
 }
 
 func printImportSummary(result memory.ChatGPTImportResult) {
