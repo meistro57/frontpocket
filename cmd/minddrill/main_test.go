@@ -89,3 +89,30 @@ func TestMindDrillUINeverEmbedsServerSecrets(t *testing.T) {
 		t.Fatal("expected UI to avoid exposing OPENROUTER_API_KEY")
 	}
 }
+
+func TestMindDrillUIUsesNonDebugSessionDeleteRoute(t *testing.T) {
+	testServer := httptest.NewServer(newHandler("http://localhost:8088"))
+	defer testServer.Close()
+
+	resp, err := http.Get(testServer.URL + "/")
+	if err != nil {
+		t.Fatalf("root request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed reading root response body: %v", err)
+	}
+	content := string(body)
+
+	if !strings.Contains(content, "/memory/chat/session") {
+		t.Fatal("expected UI to use the non-debug chat session delete route")
+	}
+	if strings.Contains(content, "/minddrill/memory/session") {
+		t.Fatal("expected UI to avoid debug-only MindDrill session route")
+	}
+	if !strings.Contains(content, "fetchJSON") {
+		t.Fatal("expected UI to use shared JSON fetch helper")
+	}
+}

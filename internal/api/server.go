@@ -161,6 +161,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /memory/session", s.handleMemorySession)
 	s.mux.HandleFunc("DELETE /memory/session", s.handleMemorySessionDelete)
 	s.mux.HandleFunc("POST /memory/chat", s.handleMemoryChat)
+	s.mux.HandleFunc("DELETE /memory/chat/session", s.handleMemoryChatSessionDelete)
 	if s.cfg.Dev.DebugEndpoints {
 		s.mux.HandleFunc("GET /minddrill/memory/stats", s.handleMindDrillMemoryStats)
 		s.mux.HandleFunc("POST /minddrill/memory/search", s.handleMindDrillMemorySearch)

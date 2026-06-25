@@ -620,6 +620,8 @@ let searchHistory = [];
 let browseItems = [];
 let browseOffset = null;
 let chatSessionId = '';
+let chatFrontMemories = [];
+let chatMindMemories = [];
 
 const probes = [
   'Eli GPT awakening mind persona',
@@ -667,6 +669,30 @@ function fmtNum(n) { return (n != null) ? Number(n).toLocaleString() : '—'; }
 
 function apiURL(path) {
   return `${API}${path}`;
+}
+
+async function responseError(response, fallback) {
+  let body = null;
+  try { body = await response.json(); } catch {}
+  const err = body?.error || body || {};
+  const code = err.code ? `[${err.code}] ` : '';
+  const message = err.message || fallback || `HTTP ${response.status}`;
+  const detail = err.detail ? ` — ${err.detail}` : '';
+  return new Error(`${code}${message}${detail}`);
+}
+
+async function fetchJSON(path, options = {}, timeoutMs = 15000) {
+  const init = { ...options };
+  init.headers = { ...(options.headers || {}) };
+  init.signal = options.signal || AbortSignal.timeout(timeoutMs);
+  const response = await fetch(apiURL(path), init);
+  if (!response.ok) throw await responseError(response, `HTTP ${response.status}`);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function jsonHeaders() {
+  return { 'Content-Type': 'application/json' };
 }
 
 async function loadConfig() {
@@ -771,12 +797,39 @@ function buildProbes() {
   });
 }
 
-function addHistory(q) {
-  searchHistory = [q, ...searchHistory.filter(h => h !== q)].slice(0, 12);
+function loadHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('minddrill-search-history') || '[]');
+    searchHistory = Array.isArray(saved) ? saved.filter(Boolean).slice(0, 12) : [];
+  } catch { searchHistory = []; }
+  renderHistory();
+}
+
+function saveHistory() {
+  localStorage.setItem('minddrill-search-history', JSON.stringify(searchHistory.slice(0, 12)));
+}
+
+function renderHistory() {
   const el = document.getElementById('history-list');
+  if (!searchHistory.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">no searches yet</div>';
+    return;
+  }
   el.innerHTML = searchHistory.map(h =>
     `<div class="history-item" onclick="rerunSearch(${JSON.stringify(h)})">${esc(h)}</div>`
-  ).join('');
+  ).join('') + '<button class="btn btn-sm" style="margin-top:6px" onclick="clearHistory()">clear history</button>';
+}
+
+function addHistory(q) {
+  searchHistory = [q, ...searchHistory.filter(h => h !== q)].slice(0, 12);
+  saveHistory();
+  renderHistory();
+}
+
+function clearHistory() {
+  searchHistory = [];
+  localStorage.removeItem('minddrill-search-history');
+  renderHistory();
 }
 
 function rerunSearch(q) {
@@ -796,28 +849,25 @@ function ensureChatSession() {
   document.getElementById('chat-session-id').textContent = `session: ${chatSessionId}`;
 }
 
-function renderChatMemoryList(elId, items) {
+function renderChatMemoryList(elId, items, ns) {
   const el = document.getElementById(elId);
   if (!Array.isArray(items) || items.length === 0) {
     el.innerHTML = '<div style="font-size:12px;color:var(--text3)">none used</div>';
     return;
   }
-  el.innerHTML = items.map(item => {
-    const quote = esc(item.source_quote || item.summary || item.text || '');
-    const kind = esc(item.memory_kind || 'memory');
-    const id = esc(item.memory_id || '');
-    return `<div class="chat-memory-item"><div class="chat-memory-item-title">${kind} • ${id}</div><div class="chat-memory-item-body">${quote}</div></div>`;
-  }).join('');
+  el.innerHTML = items.map((item, i) => cardHTML(item, i, ns)).join('');
 }
 
 function renderChatResponse(data) {
   const front = Array.isArray(data.used_frontpocket_memories) ? data.used_frontpocket_memories : [];
   const mind = Array.isArray(data.used_minddrill_memories) ? data.used_minddrill_memories : [];
+  chatFrontMemories = front;
+  chatMindMemories = mind;
   document.getElementById('chat-answer').textContent = data.answer || '';
   document.getElementById('chat-memory-status').textContent = `using ${front.length} FrontPocket memories + ${mind.length} MindDrill memories`;
   document.getElementById('chat-provider-model').textContent = `${data.provider || 'none'} / ${data.model || 'retrieval-only'}`;
-  renderChatMemoryList('chat-front-memories', front);
-  renderChatMemoryList('chat-mind-memories', mind);
+  renderChatMemoryList('chat-front-memories', front, 'cf');
+  renderChatMemoryList('chat-mind-memories', mind, 'cm');
 }
 
 async function doChat(rememberThis) {
@@ -831,14 +881,11 @@ async function doChat(rememberThis) {
   document.getElementById('chat-error').innerHTML = '';
 
   try {
-    const r = await fetch(apiURL('/memory/chat'), {
+    const d = await fetchJSON('/memory/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ session_id: chatSessionId, message, remember_this: !!rememberThis }),
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    }, 20000);
     renderChatResponse(d);
   } catch (e) {
     document.getElementById('chat-error').innerHTML = `<div class="error-box">Chat failed: ${esc(e.message)}</div>`;
@@ -851,11 +898,9 @@ async function doChat(rememberThis) {
 async function forgetChatSession() {
   document.getElementById('chat-error').innerHTML = '';
   try {
-    const r = await fetch(apiURL(`/minddrill/memory/session?session_id=${encodeURIComponent(chatSessionId)}`), {
+    await fetchJSON(`/memory/chat/session?session_id=${encodeURIComponent(chatSessionId)}`, {
       method: 'DELETE',
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!r.ok && r.status !== 404) throw new Error(`HTTP ${r.status}`);
+    }, 12000);
   } catch (e) {
     document.getElementById('chat-error').innerHTML = `<div class="error-box">Forget session failed: ${esc(e.message)}</div>`;
   }
@@ -864,8 +909,10 @@ async function forgetChatSession() {
   ensureChatSession();
   document.getElementById('chat-answer').textContent = 'MindDrill chat session reset.';
   document.getElementById('chat-memory-status').textContent = 'using 0 FrontPocket memories + 0 MindDrill memories';
-  renderChatMemoryList('chat-front-memories', []);
-  renderChatMemoryList('chat-mind-memories', []);
+  chatFrontMemories = [];
+  chatMindMemories = [];
+  renderChatMemoryList('chat-front-memories', [], 'cf');
+  renderChatMemoryList('chat-mind-memories', [], 'cm');
 }
 
 async function doSearch() {
@@ -880,14 +927,11 @@ async function doSearch() {
   document.getElementById('results-label').textContent = 'searching…';
 
   try {
-    const r = await fetch(apiURL('/memory/search'), {
+    const d = await fetchJSON('/memory/search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ query: q, limit: limit * 2 }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    }, 15000);
     lastResults = d.results || d.memories || (Array.isArray(d) ? d : []);
     addHistory(q);
     renderResults(lastResults);
@@ -957,7 +1001,11 @@ function cardHTML(item, i, ns) {
 }
 
 function getItem(i, ns) {
-  return ns === 'r' ? (lastResults[i] || {}) : (browseItems[i] || {});
+  if (ns === 'r') return lastResults[i] || {};
+  if (ns === 'b') return browseItems[i] || {};
+  if (ns === 'cf') return chatFrontMemories[i] || {};
+  if (ns === 'cm') return chatMindMemories[i] || {};
+  return {};
 }
 
 function toggleCard(ns, i) {
@@ -1007,14 +1055,11 @@ async function doContextPack() {
   document.getElementById('ctx-error').innerHTML = '';
   document.getElementById('ctx-result').innerHTML = '<div class="empty-state">packing context…</div>';
   try {
-    const r = await fetch(apiURL('/memory/context-pack'), {
+    const d = await fetchJSON('/memory/context-pack', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ query: q, limit }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    }, 15000);
     const text = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
     const escaped = esc(text);
     document.getElementById('ctx-result').innerHTML = `<div class="context-pack">
@@ -1046,14 +1091,11 @@ async function fetchBrowsePage(reset) {
   if (browseOffset) body.offset = browseOffset;
   if (speaker) body.filter = { speaker };
   try {
-    const r = await fetch(apiURL('/memory/search'), {
+    const d = await fetchJSON('/memory/search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    }, 12000);
     const items = d.results || d.memories || (Array.isArray(d) ? d : []);
     const start = reset ? 0 : browseItems.length;
     if (reset) browseItems = [];
@@ -1076,10 +1118,13 @@ document.getElementById('chat-input').addEventListener('keydown', e => { if (e.k
 
 async function initApp() {
   initTheme();
+  loadHistory();
   buildProbes();
   ensureChatSession();
-  renderChatMemoryList('chat-front-memories', []);
-  renderChatMemoryList('chat-mind-memories', []);
+  chatFrontMemories = [];
+  chatMindMemories = [];
+  renderChatMemoryList('chat-front-memories', [], 'cf');
+  renderChatMemoryList('chat-mind-memories', [], 'cm');
   await loadConfig();
   await checkHealth();
   setInterval(checkHealth, 30000);

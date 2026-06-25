@@ -40,6 +40,10 @@ It also exposes:
 The embedded page loads `/config.json` on startup and uses that runtime value for all
 FrontPocket API calls, replacing the old hardcoded API constant.
 
+## Roadmap
+
+The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). Sprint 1 focuses on trust and control: non-debug chat session deletion, structured UI errors, richer chat evidence cards, and local search history controls.
+
 ## Requirements
 
 - The FrontPocket API must be running and reachable at the `--api` URL.
@@ -57,6 +61,7 @@ MindDrill is a thin client over the FrontPocket API:
 - `POST /memory/search` — semantic search
 - `POST /memory/context-pack` — assemble session context
 - `POST /memory/chat` — chat response with split memory context
+- `DELETE /memory/chat/session` — clear the current MindDrill chat session and its chat memory
 
 ## Chat mode memory separation
 
