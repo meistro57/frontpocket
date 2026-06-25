@@ -13,6 +13,13 @@ EMBEDDING_PROVIDER=openrouter
 OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
 ```
 
+If you plan to use the MindDrill UI or another browser app, list its origin so the API
+returns CORS headers for it (the default already includes MindDrill's `:8089`):
+
+```env
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8089
+```
+
 ## 2) Build + ensure helper scripts are executable
 
 ```bash
@@ -77,7 +84,18 @@ Raw export `.zip` files are ignored by git (`*.zip`) by default.
 If you hit an embedding JSON decode error on large imports, rebuild with `./make_all.sh` to pick up the latest embedding response handling.
 If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest to pick up UUID-compatible Qdrant point IDs (look for `not a valid point ID` in logs when using older binaries).
 
-## 11) Run tests
+## 11) Explore memory in the browser (MindDrill)
+
+With the API running, launch the MindDrill memory explorer:
+
+```bash
+frontpocket minddrill          # or: minddrill / go run ./cmd/minddrill
+```
+
+Open the printed URL (default <http://localhost:8089>). Ensure the MindDrill origin is
+listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md` for options.
+
+## 12) Run tests
 
 ```bash
 go test ./...

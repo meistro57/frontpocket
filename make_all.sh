@@ -8,3 +8,4 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$ROOT_DIR"
 go build ./...
 go build -o "$ROOT_DIR/frontpocket" ./cmd/frontpocket
+go build -o "$ROOT_DIR/minddrill"   ./cmd/minddrill

@@ -42,3 +42,41 @@ func requestLogMiddleware(logger *slog.Logger, enabled bool, next http.Handler) 
 		logger.Info("request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start).String())
 	})
 }
+
+// CORSMiddleware sets Access-Control-Allow-Origin headers based on the allowed
+// origins list from config. If the request Origin matches an allowed origin it
+// is reflected back. A wildcard "*" in the list allows all origins.
+// OPTIONS preflight requests are answered immediately with 204.
+func CORSMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	wildcard := false
+	for _, o := range allowedOrigins {
+		trimmed := strings.TrimSpace(o)
+		if trimmed == "*" {
+			wildcard = true
+		}
+		allowed[trimmed] = struct{}{}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if wildcard {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else if _, ok := allowed[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-FrontPocket-Key")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}

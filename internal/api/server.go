@@ -101,6 +101,10 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	var handler http.Handler = s.mux
+
+	// CORS must wrap everything including OPTIONS preflight — apply first (outermost).
+	handler = CORSMiddleware(s.cfg.Dev.CORSOrigins, handler)
+
 	if s.cfg.Security.RequireAPIKey {
 		handler = APIKeyMiddleware(
 			s.cfg.Security.APIKey,
@@ -108,6 +112,7 @@ func (s *Server) Handler() http.Handler {
 			handler,
 		)
 	}
+
 	return requestLogMiddleware(s.logger, s.cfg.Logging.LogRequests, handler)
 }
 
