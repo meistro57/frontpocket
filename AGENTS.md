@@ -218,6 +218,9 @@ frontpocket/
   cmd/
     frontpocket/
       main.go
+    minddrill/
+      main.go
+      index.html
 
   internal/
     api/
@@ -259,12 +262,14 @@ frontpocket/
     openapi_action_schema.yaml
 
   docs/
+    getting-started.md
     architecture.md
     memory-model.md
     privacy.md
     local-first.md
     future-gpt-action.md
     providers.md
+    minddrill.md
 
   tests/
     chunker_test.go

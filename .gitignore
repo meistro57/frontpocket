@@ -2,6 +2,7 @@
 .env
 .env.local
 *.env
+.env.cors_patch
 !.env.example
 
 # OS/editor junk
@@ -18,6 +19,7 @@ dist/
 *.out
 coverage.out
 /frontpocket
+/minddrill
 
 # Logs
 *.log

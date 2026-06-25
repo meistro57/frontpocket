@@ -25,6 +25,8 @@ No crystal ball. Just retrieval with receipts.
 - **Retrieval endpoints:** search and context-pack with source metadata.
 - **Operational endpoints:** memory stats and session state for trusted usage.
 - **OpenAPI support:** served at `GET /openapi.json` for integrations.
+- **MindDrill UI:** a built-in, browser-based memory explorer for searching and building context packs.
+- **CORS support:** configurable allowed origins so browser apps (including MindDrill) can call the API directly.
 
 ## API endpoints
 
@@ -71,6 +73,16 @@ To use Gemini embeddings through OpenRouter:
 EMBEDDING_PROVIDER=openrouter
 OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
 ```
+
+Browser apps (including the bundled MindDrill UI) call the API directly, so set the
+origins they are served from:
+
+```env
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8089
+```
+
+The API reflects matching origins back via `Access-Control-Allow-Origin`, answers
+`OPTIONS` preflight requests with `204`, and supports a `*` wildcard to allow all origins.
 
 ### 2) Build + ensure helper scripts are executable
 
@@ -163,6 +175,37 @@ Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce re
 
 ---
 
+## MindDrill memory explorer
+
+<img src="MindDrill_logo.png" alt="MindDrill" width="120" align="right" />
+
+MindDrill is a built-in, single-page browser UI for exploring your memory. It talks to the
+FrontPocket API to run semantic searches, build context packs, and view memory stats — no
+extra dependencies, the page is embedded directly in the binary.
+
+Start it from the main CLI (it uses the standalone `minddrill` binary if present on `PATH`,
+otherwise falls back to `go run ./cmd/minddrill`):
+
+```bash
+frontpocket minddrill
+```
+
+Or run the standalone binary built by `./make_all.sh`:
+
+```bash
+minddrill                              # serves on http://localhost:8089
+minddrill --port 9000                  # custom port
+minddrill --api http://localhost:8088  # point at a non-default API base URL
+```
+
+Then open the printed URL (default <http://localhost:8089>) in your browser. Make sure the
+FrontPocket API is running and that the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`
+(port `8089` is included in the default list).
+
+```bash
+frontpocket minddrill --help
+```
+
 ## Examples
 
 - Request samples: `examples/search_request.json`
@@ -214,6 +257,7 @@ The journal is keyed to the source, collection, and embedding model, so a stale 
 frontpocket --help
 frontpocket ingest --help
 frontpocket ingest chatgpt --help
+frontpocket minddrill --help
 ```
 
 ### Notes
@@ -227,6 +271,7 @@ frontpocket ingest chatgpt --help
 
 - `docs/getting-started.md`
 - `docs/architecture.md`
+- `docs/minddrill.md`
 - `docs/memory-model.md`
 - `docs/providers.md`
 - `docs/privacy.md`
@@ -249,6 +294,12 @@ Run API directly:
 
 ```bash
 go run ./cmd/frontpocket
+```
+
+Run the MindDrill UI directly:
+
+```bash
+go run ./cmd/minddrill
 ```
 
 Print version:

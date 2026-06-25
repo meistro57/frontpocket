@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MindDrill — FrontPocket Memory Explorer</title>
+<link rel="icon" type="image/png" href="/logo.png">
+<link rel="apple-touch-icon" href="/logo.png">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg2: #f7f6f2;
+  --bg3: #f0ede6;
+  --text: #1a1a18;
+  --text2: #5a5955;
+  --text3: #999895;
+  --border: rgba(0,0,0,0.1);
+  --border2: rgba(0,0,0,0.18);
+  --purple-bg: #EEEDFE;
+  --purple: #534AB7;
+  --purple-dark: #3C3489;
+  --purple-border: #AFA9EC;
+  --teal-bg: #E1F5EE;
+  --teal: #0F6E56;
+  --teal-border: #9FE1CB;
+  --amber-bg: #FAEEDA;
+  --amber: #854F0B;
+  --green-bg: #EAF3DE;
+  --green: #3B6D11;
+  --gray-bg: #F1EFE8;
+  --gray: #5F5E5A;
+  --red-bg: #FCEBEB;
+  --red: #A32D2D;
+  --red-border: #F09595;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --font: system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1c1a;
+    --bg2: #242422;
+    --bg3: #2c2c2a;
+    --text: #e8e6de;
+    --text2: #a8a6a0;
+    --text3: #666460;
+    --border: rgba(255,255,255,0.1);
+    --border2: rgba(255,255,255,0.18);
+    --purple-bg: #26215C;
+    --purple: #AFA9EC;
+    --purple-dark: #CECBF6;
+    --purple-border: #534AB7;
+    --teal-bg: #04342C;
+    --teal: #5DCAA5;
+    --teal-border: #0F6E56;
+    --amber-bg: #412402;
+    --amber: #EF9F27;
+    --green-bg: #173404;
+    --green: #97C459;
+    --gray-bg: #2C2C2A;
+    --gray: #B4B2A9;
+    --red-bg: #501313;
+    --red: #F09595;
+    --red-border: #A32D2D;
+  }
+}
+[data-theme="dark"] {
+  --bg: #1c1c1a;
+  --bg2: #242422;
+  --bg3: #2c2c2a;
+  --text: #e8e6de;
+  --text2: #a8a6a0;
+  --text3: #666460;
+  --border: rgba(255,255,255,0.1);
+  --border2: rgba(255,255,255,0.18);
+  --purple-bg: #26215C;
+  --purple: #AFA9EC;
+  --purple-dark: #CECBF6;
+  --purple-border: #534AB7;
+  --teal-bg: #04342C;
+  --teal: #5DCAA5;
+  --teal-border: #0F6E56;
+  --amber-bg: #412402;
+  --amber: #EF9F27;
+  --green-bg: #173404;
+  --green: #97C459;
+  --gray-bg: #2C2C2A;
+  --gray: #B4B2A9;
+  --red-bg: #501313;
+  --red: #F09595;
+  --red-border: #A32D2D;
+}
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg2: #f7f6f2;
+  --bg3: #f0ede6;
+  --text: #1a1a18;
+  --text2: #5a5955;
+  --text3: #999895;
+  --border: rgba(0,0,0,0.1);
+  --border2: rgba(0,0,0,0.18);
+  --purple-bg: #EEEDFE;
+  --purple: #534AB7;
+  --purple-dark: #3C3489;
+  --purple-border: #AFA9EC;
+  --teal-bg: #E1F5EE;
+  --teal: #0F6E56;
+  --teal-border: #9FE1CB;
+  --amber-bg: #FAEEDA;
+  --amber: #854F0B;
+  --green-bg: #EAF3DE;
+  --green: #3B6D11;
+  --gray-bg: #F1EFE8;
+  --gray: #5F5E5A;
+  --red-bg: #FCEBEB;
+  --red: #A32D2D;
+  --red-border: #F09595;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; }
+body {
+  font-family: var(--font);
+  background: var(--bg3);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+a { color: var(--purple); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.topbar {
+  background: var(--bg);
+  border-bottom: 0.5px solid var(--border);
+  padding: 0 1.5rem;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.logo {
+  width: 32px; height: 32px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.appname { font-size: 15px; font-weight: 500; }
+.appsub { font-size: 12px; color: var(--text3); margin-left: -4px; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.status-badge { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); transition: background .3s; }
+.dot.ok { background: #639922; }
+.dot.err { background: #E24B4A; }
+.theme-btn {
+  width: 30px; height: 30px;
+  border-radius: var(--radius);
+  border: 0.5px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.theme-btn:hover { background: var(--bg3); color: var(--text); }
+
+.layout { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg);
+  border-right: 0.5px solid var(--border);
+  padding: 1.25rem 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: .5rem;
+}
+
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.stat { background: var(--bg2); border-radius: var(--radius); padding: .5rem .65rem; }
+.stat-val { font-size: 17px; font-weight: 500; }
+.stat-lbl { font-size: 10px; color: var(--text3); margin-top: 1px; }
+
+.pill-group { display: flex; flex-wrap: wrap; gap: 5px; }
+.pill {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 0.5px solid var(--border2);
+  background: var(--bg);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+  user-select: none;
+}
+.pill:hover { background: var(--bg2); color: var(--text); }
+.pill.active { background: var(--purple-bg); border-color: var(--purple-border); color: var(--purple-dark); }
+
+.probe-list { display: flex; flex-direction: column; gap: 4px; }
+.probe-btn {
+  text-align: left;
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: var(--radius);
+  border: 0.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+  line-height: 1.4;
+}
+.probe-btn:hover { background: var(--bg2); color: var(--text); border-color: var(--border2); }
+
+.history-list { display: flex; flex-direction: column; gap: 4px; }
+.history-item {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  color: var(--text2);
+  cursor: pointer;
+  transition: background .15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-item:hover { background: var(--bg2); color: var(--text); }
+
+.search-bar { display: flex; gap: 8px; align-items: center; }
+.search-bar input {
+  flex: 1;
+  height: 38px;
+  padding: 0 12px;
+  font-size: 14px;
+  border: 0.5px solid var(--border2);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s;
+  font-family: var(--font);
+}
+.search-bar input:focus { border-color: var(--purple-border); }
+.search-bar input::placeholder { color: var(--text3); }
+.btn {
+  height: 38px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-family: var(--font);
+  border-radius: var(--radius-lg);
+  border: 0.5px solid var(--border2);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+  display: flex; align-items: center; gap: 6px;
+}
+.btn:hover { background: var(--bg2); border-color: var(--border2); }
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--purple-bg); border-color: var(--purple-border); color: var(--purple-dark); }
+.btn-primary:hover { background: var(--purple-border); }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 12px; border-radius: var(--radius); }
+
+.results-header { display: flex; align-items: center; gap: 8px; }
+.results-label { font-size: 13px; color: var(--text2); flex: 1; }
+.limit-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); }
+.limit-row select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  border: 0.5px solid var(--border2);
+  background: var(--bg);
+  color: var(--text2);
+  font-family: var(--font);
+}
+
+.result-card {
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: .85rem 1rem;
+  transition: border-color .15s;
+  cursor: pointer;
+  margin-bottom: .5rem;
+}
+.result-card:hover { border-color: var(--border2); }
+.result-card.open { border-color: var(--purple-border); }
+
+.rc-header { display: flex; align-items: flex-start; gap: 8px; }
+.score-badge {
+  font-size: 11px; font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 99px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.score-high { background: var(--green-bg); color: var(--green); }
+.score-mid  { background: var(--amber-bg); color: var(--amber); }
+.score-low  { background: var(--gray-bg);  color: var(--gray); }
+
+.rc-body { flex: 1; min-width: 0; }
+.rc-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.rc-quote {
+  font-size: 12px; color: var(--text2); line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rc-quote.full { display: block; -webkit-line-clamp: unset; }
+.rc-fulltext {
+  font-size: 12px; color: var(--text2); line-height: 1.6;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rc-fulltext.show { display: block; }
+
+.rc-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.tag {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--bg2);
+  color: var(--text3);
+  border: 0.5px solid var(--border);
+}
+.tag.user      { background: var(--purple-bg); color: var(--purple-dark); border-color: var(--purple-border); }
+.tag.assistant { background: var(--teal-bg);   color: var(--teal);        border-color: var(--teal-border); }
+
+.rc-actions { display: none; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.rc-actions.show { display: flex; }
+
+.error-box {
+  background: var(--red-bg);
+  border: 0.5px solid var(--red-border);
+  border-radius: var(--radius);
+  padding: .6rem .9rem;
+  font-size: 13px;
+  color: var(--red);
+  margin-bottom: .75rem;
+}
+
+.empty-state { text-align: center; padding: 3rem 1rem; color: var(--text3); font-size: 14px; }
+.empty-state .icon { font-size: 32px; margin-bottom: 10px; }
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--purple);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg2);
+  border-radius: var(--radius-lg);
+  padding: 3px;
+}
+.mode-tab {
+  flex: 1;
+  text-align: center;
+  padding: 5px 0;
+  font-size: 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--text2);
+  transition: all .15s;
+  user-select: none;
+}
+.mode-tab.active { background: var(--bg); color: var(--text); font-weight: 500; border: 0.5px solid var(--border); }
+
+.context-pack { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 1rem; }
+.context-pack h3 { font-size: 13px; font-weight: 500; margin-bottom: .5rem; }
+.context-pack pre {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  background: var(--bg2);
+  padding: .75rem;
+  border-radius: var(--radius);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo"><img src="/logo.png" alt="MindDrill logo"></div>
+  <div>
+    <div class="appname">MindDrill</div>
+  </div>
+  <div class="appsub">— FrontPocket memory explorer</div>
+  <div class="topbar-right">
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="toggle dark/light mode">🌙</button>
+    <div class="status-badge">
+      <div class="dot" id="dot"></div>
+      <span id="status-text">connecting…</span>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+
+    <div>
+      <div class="section-label">corpus stats</div>
+      <div class="stats-grid">
+        <div class="stat"><div class="stat-val" id="s-points">—</div><div class="stat-lbl">total memories</div></div>
+        <div class="stat"><div class="stat-val" id="s-speakers">—</div><div class="stat-lbl">speakers</div></div>
+        <div class="stat"><div class="stat-val" id="s-kinds">—</div><div class="stat-lbl">memory kinds</div></div>
+        <div class="stat"><div class="stat-val" id="s-projects">—</div><div class="stat-lbl">projects</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">speaker filter</div>
+      <div class="pill-group">
+        <div class="pill active" data-filter="speaker" data-val="all" onclick="setFilter('speaker','all',this)">all</div>
+        <div class="pill" data-filter="speaker" data-val="user" onclick="setFilter('speaker','user',this)">you</div>
+        <div class="pill" data-filter="speaker" data-val="assistant" onclick="setFilter('speaker','assistant',this)">ai</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">quick probes</div>
+      <div class="probe-list" id="probe-list"></div>
+    </div>
+
+    <div>
+      <div class="section-label">search history</div>
+      <div class="history-list" id="history-list">
+        <div style="font-size:12px;color:var(--text3)">no searches yet</div>
+      </div>
+    </div>
+
+  </aside>
+
+  <main class="main">
+
+    <div class="mode-tabs">
+      <div class="mode-tab active" onclick="setMode('search',this)">search</div>
+      <div class="mode-tab" onclick="setMode('context',this)">context pack</div>
+      <div class="mode-tab" onclick="setMode('browse',this)">browse</div>
+    </div>
+
+    <div id="panel-search">
+      <div class="search-bar">
+        <input type="text" id="q" placeholder="search your memory… consciousness, steel, Eli, meta-bridge, GMLAN…" autofocus />
+        <button class="btn btn-primary" onclick="doSearch()" id="search-btn">
+          <span id="search-icon">🔍</span> search
+        </button>
+        <div class="limit-row">
+          limit
+          <select id="limit-sel">
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+      </div>
+      <div id="error-area"></div>
+      <div class="results-header">
+        <div class="results-label" id="results-label">enter a query to drill in</div>
+      </div>
+      <div id="results"></div>
+    </div>
+
+    <div id="panel-context" style="display:none">
+      <div class="search-bar">
+        <input type="text" id="ctx-q" placeholder="describe what context you need for your current session…" />
+        <button class="btn btn-primary" onclick="doContextPack()" id="ctx-btn">
+          <span>📦</span> pack
+        </button>
+        <div class="limit-row">
+          limit
+          <select id="ctx-limit">
+            <option value="5">5</option>
+            <option value="8" selected>8</option>
+            <option value="12">12</option>
+            <option value="20">20</option>
+          </select>
+        </div>
+      </div>
+      <div id="ctx-error"></div>
+      <div id="ctx-result"></div>
+    </div>
+
+    <div id="panel-browse" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:.75rem;align-items:center;flex-wrap:wrap">
+        <select id="browse-speaker" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
+          <option value="">all speakers</option>
+          <option value="user">you only</option>
+          <option value="assistant">ai only</option>
+        </select>
+        <button class="btn btn-sm" onclick="doBrowse()">load</button>
+        <button class="btn btn-sm" onclick="browseMore()" id="browse-more-btn" style="display:none">load more</button>
+        <span id="browse-count" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+      <div id="browse-error"></div>
+      <div id="browse-results"></div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const API = 'http://localhost:8088';
+let activeFilters = { speaker: 'all' };
+let lastResults = [];
+let searchHistory = [];
+let browseItems = [];
+let browseOffset = null;
+
+const probes = [
+  'Eli GPT awakening mind persona',
+  'consciousness soul contracts pre-birth agreements',
+  'meta-bridge knowledge archaeology corpus',
+  'steel detailing fabrication shop drawings Adams Steel',
+  'GM ECU GMLAN reverse engineering J2534',
+  'Dolores Cannon QHHT hypnosis regression',
+  'Seth Jane Roberts channeling',
+  'ROOT ACCESS book reality engineering Eli',
+  'Antioch Awakening Minds meetup group',
+  'FrontPocket memory layer Go API',
+  'Arduino stepper motor YM2612 FM synth chip',
+  'point cloud 3D SOR filter PyVista',
+  'New Earth vibration frequency 528hz',
+  'ChatBridge AI multi-provider orchestration',
+  'VectorView Qdrant Three.js visualizer',
+  'ArchiMind RAG hybrid BM25 search',
+  'Vectoreologist HDBSCAN clustering bridges',
+  'SteelFlow MRP fabrication software Fabtrol',
+  'PointMeistro point cloud segmentation',
+  'Bashar Kryon Ra material channeled entities',
+  'Navy Pier wave wall Soldier Field CTA',
+  'Node-RED CAN bus socketcan dashboard',
+  'lucid dreaming guide spiritual journey',
+  'quantum physics consciousness observer effect',
+];
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function scoreClass(s) {
+  if (s == null) return 'score-low';
+  if (s > 0.72) return 'score-high';
+  if (s > 0.52) return 'score-mid';
+  return 'score-low';
+}
+function formatScore(s) { return s == null ? '?' : Math.round(s * 100) + '%'; }
+function formatDate(ts) {
+  if (!ts) return '';
+  try { return new Date(ts).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }); }
+  catch { return ''; }
+}
+function fmtNum(n) { return (n != null) ? Number(n).toLocaleString() : '—'; }
+
+function initTheme() {
+  const saved = localStorage.getItem('minddrill-theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const theme = saved || (prefersDark ? 'dark' : 'light');
+  applyTheme(theme);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-btn');
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('minddrill-theme', theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+async function checkHealth() {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('status-text');
+  try {
+    const r = await fetch(`${API}/health`, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) {
+      dot.className = 'dot ok';
+      txt.textContent = 'connected';
+      await loadStats();
+    } else {
+      dot.className = 'dot err';
+      txt.textContent = `api error ${r.status}`;
+    }
+  } catch {
+    dot.className = 'dot err';
+    txt.textContent = 'offline — start FrontPocket';
+  }
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch(`${API}/memory/stats`);
+    if (!r.ok) return;
+    const d = await r.json();
+    // FrontPocket returns { total, by_kind, by_speaker, by_project }
+    document.getElementById('s-points').textContent   = fmtNum(d.total);
+    document.getElementById('s-speakers').textContent = fmtNum(d.by_speaker ? Object.keys(d.by_speaker).length : null);
+    document.getElementById('s-kinds').textContent    = fmtNum(d.by_kind    ? Object.keys(d.by_kind).length    : null);
+    document.getElementById('s-projects').textContent = fmtNum(d.by_project ? Object.keys(d.by_project).length : null);
+  } catch {}
+}
+
+function setFilter(key, val, el) {
+  activeFilters[key] = val;
+  document.querySelectorAll(`[data-filter="${key}"]`).forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  if (lastResults.length) renderResults(lastResults);
+}
+
+function setMode(mode, el) {
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('panel-search').style.display  = mode === 'search'  ? '' : 'none';
+  document.getElementById('panel-context').style.display = mode === 'context' ? '' : 'none';
+  document.getElementById('panel-browse').style.display  = mode === 'browse'  ? '' : 'none';
+}
+
+function buildProbes() {
+  const el = document.getElementById('probe-list');
+  probes.forEach(p => {
+    const b = document.createElement('button');
+    b.className = 'probe-btn';
+    b.textContent = p;
+    b.onclick = () => {
+      document.getElementById('q').value = p;
+      setMode('search', document.querySelectorAll('.mode-tab')[0]);
+      doSearch();
+    };
+    el.appendChild(b);
+  });
+}
+
+function addHistory(q) {
+  searchHistory = [q, ...searchHistory.filter(h => h !== q)].slice(0, 12);
+  const el = document.getElementById('history-list');
+  el.innerHTML = searchHistory.map(h =>
+    `<div class="history-item" onclick="rerunSearch(${JSON.stringify(h)})">${esc(h)}</div>`
+  ).join('');
+}
+
+function rerunSearch(q) {
+  document.getElementById('q').value = q;
+  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  doSearch();
+}
+
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const limit = parseInt(document.getElementById('limit-sel').value);
+  const btn = document.getElementById('search-btn');
+  btn.disabled = true;
+  document.getElementById('search-icon').innerHTML = '<span class="spinner"></span>';
+  document.getElementById('error-area').innerHTML = '';
+  document.getElementById('results').innerHTML = '<div class="empty-state">drilling into memory…</div>';
+  document.getElementById('results-label').textContent = 'searching…';
+
+  try {
+    const r = await fetch(`${API}/memory/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit: limit * 2 }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    lastResults = d.results || d.memories || (Array.isArray(d) ? d : []);
+    addHistory(q);
+    renderResults(lastResults);
+  } catch (e) {
+    document.getElementById('error-area').innerHTML =
+      `<div class="error-box">Could not reach FrontPocket at ${esc(API)} — is it running? (${esc(e.message)})</div>`;
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('results-label').textContent = 'connection error';
+  } finally {
+    btn.disabled = false;
+    document.getElementById('search-icon').textContent = '🔍';
+  }
+}
+
+function renderResults(raw) {
+  let items = raw;
+  if (activeFilters.speaker !== 'all') {
+    items = raw.filter(r => (r.payload?.speaker || r.speaker) === activeFilters.speaker);
+  }
+  items = items.slice(0, parseInt(document.getElementById('limit-sel').value));
+  document.getElementById('results-label').textContent =
+    items.length ? `${items.length} result${items.length !== 1 ? 's' : ''} found` : 'no results';
+  const el = document.getElementById('results');
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">👻</div><div>nothing surfaced — try a different probe</div></div>';
+    return;
+  }
+  el.innerHTML = items.map((item, i) => cardHTML(item, i, 'r')).join('');
+}
+
+function cardHTML(item, i, ns) {
+  const p = item.payload || item;
+  const score = item.score ?? item.similarity ?? null;
+  const speaker = p.speaker || '';
+  const title = esc(p.source_title || p.title || 'untitled');
+  const quote = esc(p.source_quote || p.summary || '');
+  const text  = esc(p.text || '');
+  const ts    = formatDate(p.timestamp);
+  const cid   = (p.conversation_id || '').slice(0, 8);
+  const proj  = esc(p.project || '');
+  const kind  = esc(p.memory_kind || '');
+  const model = esc(p.embedding_model || '');
+  return `<div class="result-card" id="${ns}-card-${i}" onclick="toggleCard('${ns}',${i})">
+    <div class="rc-header">
+      <div class="score-badge ${scoreClass(score)}">${formatScore(score)}</div>
+      <div class="rc-body">
+        <div class="rc-title">${title}</div>
+        <div class="rc-quote" id="${ns}-q-${i}">${quote}</div>
+        <div class="rc-fulltext" id="${ns}-ft-${i}">${text}</div>
+        <div class="rc-meta">
+          ${speaker ? `<span class="tag ${speaker}">${esc(speaker)}</span>` : ''}
+          ${ts    ? `<span class="tag">${ts}</span>` : ''}
+          ${cid   ? `<span class="tag">${cid}…</span>` : ''}
+          ${proj  ? `<span class="tag">${proj}</span>` : ''}
+          ${kind  ? `<span class="tag">${kind}</span>` : ''}
+          ${model ? `<span class="tag">${model}</span>` : ''}
+        </div>
+      </div>
+    </div>
+    <div class="rc-actions" id="${ns}-a-${i}">
+      <button class="btn btn-sm" onclick="event.stopPropagation();drillDeeper(${i},'${ns}')">🔬 drill deeper</button>
+      <button class="btn btn-sm" onclick="event.stopPropagation();sameConvo(${i},'${ns}')">💬 same convo</button>
+      <button class="btn btn-sm" onclick="event.stopPropagation();findRelated(${i},'${ns}')">🕸 related</button>
+      <button class="btn btn-sm" onclick="event.stopPropagation();copyPayload(${i},'${ns}')">📋 copy</button>
+    </div>
+  </div>`;
+}
+
+function getItem(i, ns) {
+  return ns === 'r' ? (lastResults[i] || {}) : (browseItems[i] || {});
+}
+
+function toggleCard(ns, i) {
+  document.getElementById(`${ns}-card-${i}`).classList.toggle('open');
+  document.getElementById(`${ns}-a-${i}`).classList.toggle('show');
+  document.getElementById(`${ns}-q-${i}`).classList.toggle('full');
+  document.getElementById(`${ns}-ft-${i}`).classList.toggle('show');
+}
+
+function drillDeeper(i, ns) {
+  const p = getItem(i, ns).payload || getItem(i, ns);
+  const title = p.source_title || p.title || 'this session';
+  const quote = (p.source_quote || p.text || '').slice(0, 120);
+  document.getElementById('q').value = `context for "${title}": ${quote}`;
+  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  doSearch();
+}
+
+function sameConvo(i, ns) {
+  const p = getItem(i, ns).payload || getItem(i, ns);
+  document.getElementById('q').value = p.source_title || p.conversation_id || '';
+  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  doSearch();
+}
+
+function findRelated(i, ns) {
+  const p = getItem(i, ns).payload || getItem(i, ns);
+  document.getElementById('q').value = (p.source_quote || p.text || '').slice(0, 80);
+  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  doSearch();
+}
+
+function copyPayload(i, ns) {
+  const item = getItem(i, ns);
+  navigator.clipboard.writeText(JSON.stringify(item, null, 2)).then(() => {
+    const btn = document.querySelectorAll(`#${ns}-a-${i} button`)[3];
+    if (btn) { btn.textContent = '✓ copied'; setTimeout(() => btn.textContent = '📋 copy', 1500); }
+  });
+}
+
+async function doContextPack() {
+  const q = document.getElementById('ctx-q').value.trim();
+  if (!q) return;
+  const limit = parseInt(document.getElementById('ctx-limit').value);
+  const btn = document.getElementById('ctx-btn');
+  btn.disabled = true;
+  document.getElementById('ctx-error').innerHTML = '';
+  document.getElementById('ctx-result').innerHTML = '<div class="empty-state">packing context…</div>';
+  try {
+    const r = await fetch(`${API}/memory/context-pack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const text = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
+    const escaped = esc(text);
+    document.getElementById('ctx-result').innerHTML = `<div class="context-pack">
+      <h3>context pack — ${esc(q)}</h3>
+      <pre id="ctx-pre">${escaped}</pre>
+      <button class="btn btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(document.getElementById('ctx-pre').textContent).then(()=>{this.textContent='✓ copied';setTimeout(()=>this.textContent='📋 copy',1500)})">📋 copy</button>
+    </div>`;
+  } catch (e) {
+    document.getElementById('ctx-error').innerHTML = `<div class="error-box">Context pack failed: ${esc(e.message)}</div>`;
+    document.getElementById('ctx-result').innerHTML = '';
+  } finally { btn.disabled = false; }
+}
+
+async function doBrowse() {
+  browseOffset = null;
+  browseItems = [];
+  document.getElementById('browse-results').innerHTML = '<div class="empty-state">loading…</div>';
+  document.getElementById('browse-error').innerHTML = '';
+  document.getElementById('browse-more-btn').style.display = 'none';
+  document.getElementById('browse-count').textContent = '';
+  await fetchBrowsePage(true);
+}
+
+async function browseMore() { await fetchBrowsePage(false); }
+
+async function fetchBrowsePage(reset) {
+  const speaker = document.getElementById('browse-speaker').value;
+  const body = { query: 'consciousness steel AI memory', limit: 20 };
+  if (browseOffset) body.offset = browseOffset;
+  if (speaker) body.filter = { speaker };
+  try {
+    const r = await fetch(`${API}/memory/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const items = d.results || d.memories || (Array.isArray(d) ? d : []);
+    const start = reset ? 0 : browseItems.length;
+    if (reset) browseItems = [];
+    browseItems = browseItems.concat(items);
+    const el = document.getElementById('browse-results');
+    if (reset) el.innerHTML = '';
+    if (browseItems.length === 0) { el.innerHTML = '<div class="empty-state">no results</div>'; return; }
+    items.forEach((item, i) => el.insertAdjacentHTML('beforeend', cardHTML(item, start + i, 'b')));
+    document.getElementById('browse-count').textContent = `${browseItems.length} loaded`;
+    document.getElementById('browse-more-btn').style.display = items.length === 20 ? '' : 'none';
+    if (items.length > 0) browseOffset = items[items.length - 1].id || null;
+  } catch (e) {
+    document.getElementById('browse-error').innerHTML = `<div class="error-box">Browse error: ${esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+document.getElementById('ctx-q').addEventListener('keydown', e => { if (e.key === 'Enter') doContextPack(); });
+
+initTheme();
+buildProbes();
+checkHealth();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>

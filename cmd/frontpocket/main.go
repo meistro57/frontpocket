@@ -1,3 +1,4 @@
+// filename: cmd/frontpocket/main.go
 package main
 
 import (
@@ -7,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -24,8 +26,13 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) > 0 && args[0] == "ingest" {
-		return runIngestCommand(args[1:])
+	if len(args) > 0 {
+		switch args[0] {
+		case "ingest":
+			return runIngestCommand(args[1:])
+		case "minddrill":
+			return runMindDrill(args[1:])
+		}
 	}
 
 	flags := flag.NewFlagSet("frontpocket", flag.ContinueOnError)
@@ -54,7 +61,8 @@ func printRootHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "  frontpocket --version")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Commands:")
-	fmt.Fprintln(flags.Output(), "  ingest      Import memory data from supported sources.")
+	fmt.Fprintln(flags.Output(), "  ingest       Import memory data from supported sources.")
+	fmt.Fprintln(flags.Output(), "  minddrill    Serve the MindDrill memory explorer in your browser.")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Subcommands:")
 	fmt.Fprintln(flags.Output(), "  ingest chatgpt      Import from a ChatGPT export zip or folder.")
@@ -62,7 +70,7 @@ func printRootHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Help:")
 	fmt.Fprintln(flags.Output(), "  frontpocket --help")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt --help")
+	fmt.Fprintln(flags.Output(), "  frontpocket minddrill --help")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Options:")
 	flags.PrintDefaults()
@@ -91,4 +99,23 @@ func runServer() error {
 		return err
 	}
 	return nil
+}
+
+// runMindDrill delegates to the minddrill binary if it exists on PATH,
+// otherwise falls back to go run ./cmd/minddrill.
+func runMindDrill(args []string) error {
+	if path, err := exec.LookPath("minddrill"); err == nil {
+		cmd := exec.Command(path, args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		return cmd.Run()
+	}
+
+	goArgs := append([]string{"run", "./cmd/minddrill"}, args...)
+	cmd := exec.Command("go", goArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
 }

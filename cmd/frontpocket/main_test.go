@@ -19,13 +19,16 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "frontpocket [command] [options]") {
 		t.Fatalf("expected root usage output, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Commands:") || !strings.Contains(output, "ingest      Import memory data from supported sources.") {
+	if !strings.Contains(output, "Commands:") || !strings.Contains(output, "Import memory data from supported sources.") {
 		t.Fatalf("expected commands reference in help output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "minddrill") || !strings.Contains(output, "Serve the MindDrill memory explorer in your browser.") {
+		t.Fatalf("expected minddrill command reference in help output, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Subcommands:") || !strings.Contains(output, "ingest chatgpt      Import from a ChatGPT export zip or folder.") {
 		t.Fatalf("expected subcommand reference in help output, got:\n%s", output)
 	}
-	if !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket ingest chatgpt --help") {
+	if !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket minddrill --help") {
 		t.Fatalf("expected nested help references in help output, got:\n%s", output)
 	}
 }
