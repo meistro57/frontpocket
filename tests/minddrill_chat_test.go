@@ -165,6 +165,83 @@ func TestMemoryChatResponseShapeAndMindDrillWriteMetadata(t *testing.T) {
 	}
 }
 
+func TestMindDrillChatSessionDeleteRouteAvailableWithoutDebugEndpoints(t *testing.T) {
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float64{{0.1, 0.2, 0.3, 0.4}}})
+	}))
+	defer embeddingServer.Close()
+
+	cfg := config.Config{
+		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088, PublicURL: "http://localhost:8088"},
+		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
+		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Embedding: config.EmbeddingConfig{
+			Provider:      "ollama",
+			OllamaModel:   "nomic-embed-text",
+			OllamaBaseURL: embeddingServer.URL,
+			Dimensions:    4,
+		},
+		Chat: config.ChatConfig{Provider: "none"},
+		MindDrillMemory: config.MindDrillMemoryConfig{
+			Collection:          "minddrill_chat_memory",
+			Enabled:             false,
+			WriteMode:           "summary",
+			TopK:                6,
+			SessionSummaryEvery: 8,
+		},
+		Ingestion:   config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},
+		Chunking:    config.ChunkingConfig{Size: 900, Overlap: 150, MinSize: 120},
+		Search:      config.SearchConfig{DefaultLimit: 5, MaxLimit: 20, IncludeSourceQuote: true, IncludeFullText: true},
+		ContextPack: config.ContextPackConfig{DefaultLimit: 8, MaxLimit: 20},
+		Dev:         config.DevConfig{DebugEndpoints: false},
+	}
+
+	srv, err := api.NewServer(cfg, logfp.NewDiscard())
+	if err != nil {
+		t.Fatalf("failed creating server: %v", err)
+	}
+	testServer := httptest.NewServer(srv.Handler())
+	defer testServer.Close()
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, testServer.URL+"/memory/chat/session?session_id=mind_sess_no_debug", nil)
+	if err != nil {
+		t.Fatalf("building delete request failed: %v", err)
+	}
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("delete request failed: %v", err)
+	}
+	defer deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected non-debug chat session delete route to return 200, got %d", deleteResp.StatusCode)
+	}
+
+	var body memory.ChatSessionDeleteResponse
+	if err := json.NewDecoder(deleteResp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding delete response failed: %v", err)
+	}
+	if body.SessionID != "mind_sess_no_debug" || !body.SessionCleared || !body.MemoryCleared {
+		t.Fatalf("unexpected delete response: %#v", body)
+	}
+
+	debugReq, err := http.NewRequest(http.MethodDelete, testServer.URL+"/minddrill/memory/session?session_id=mind_sess_no_debug", nil)
+	if err != nil {
+		t.Fatalf("building debug delete request failed: %v", err)
+	}
+	debugResp, err := http.DefaultClient.Do(debugReq)
+	if err != nil {
+		t.Fatalf("debug delete request failed: %v", err)
+	}
+	defer debugResp.Body.Close()
+	if debugResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected debug-only delete route to stay hidden, got %d", debugResp.StatusCode)
+	}
+}
+
 func stringsValue(v any) string {
 	s, _ := v.(string)
 	return s

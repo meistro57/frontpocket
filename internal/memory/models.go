@@ -151,6 +151,14 @@ type SessionResponse struct {
 	State *SessionState `json:"state,omitempty"`
 }
 
+// ChatSessionDeleteResponse reports the outcome of clearing a MindDrill chat
+// session from fast session state and durable MindDrill chat memory.
+type ChatSessionDeleteResponse struct {
+	SessionID      string `json:"session_id"`
+	SessionCleared bool   `json:"session_cleared"`
+	MemoryCleared  bool   `json:"memory_cleared"`
+}
+
 type ChatMessageRequest struct {
 	SessionID       string `json:"session_id"`
 	Message         string `json:"message"`

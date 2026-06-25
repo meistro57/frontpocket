@@ -167,40 +167,59 @@ func (s *Server) handleMindDrillMemorySearch(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: results})
 }
 
+func (s *Server) handleMemoryChatSessionDelete(w http.ResponseWriter, r *http.Request) {
+	resp, errBody, status := s.deleteMindDrillChatSession(r)
+	if errBody != nil {
+		writeError(w, status, *errBody)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleMindDrillMemorySessionDelete(w http.ResponseWriter, r *http.Request) {
+	resp, errBody, status := s.deleteMindDrillChatSession(r)
+	if errBody != nil {
+		writeError(w, status, *errBody)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) deleteMindDrillChatSession(r *http.Request) (memory.ChatSessionDeleteResponse, *memory.ErrorBody, int) {
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if sessionID == "" {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+		return memory.ChatSessionDeleteResponse{}, &memory.ErrorBody{
 			Code:    "VALIDATION_ERROR",
 			Message: "session_id query parameter is required.",
-		})
-		return
+		}, http.StatusBadRequest
 	}
 
 	if err := s.deleteSessionState(r, sessionID); err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		return memory.ChatSessionDeleteResponse{}, &memory.ErrorBody{
 			Code:    "SESSION_FAILED",
 			Message: "Session delete failed.",
 			Detail:  err.Error(),
-		})
-		return
+		}, http.StatusInternalServerError
 	}
 
 	if qStore, ok := s.mindDrillStore.(*store.QdrantMemoryStore); ok {
 		if err := qStore.DeleteByFilters(r.Context(), memory.SearchFilters{ConversationID: sessionID}); err != nil {
-			writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			return memory.ChatSessionDeleteResponse{}, &memory.ErrorBody{
 				Code:    "MINDDRILL_SESSION_DELETE_FAILED",
 				Message: "MindDrill session memory delete failed.",
 				Detail:  err.Error(),
-			})
-			return
+			}, http.StatusInternalServerError
 		}
 	}
 	if memStore, ok := s.mindDrillStore.(*memory.InMemoryStore); ok {
 		_ = memStore.DeleteByFilters(memory.SearchFilters{ConversationID: sessionID})
 	}
 
-	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: false})
+	return memory.ChatSessionDeleteResponse{
+		SessionID:      sessionID,
+		SessionCleared: true,
+		MemoryCleared:  true,
+	}, nil, http.StatusOK
 }
 
 func (s *Server) writeMindDrillChatMemory(r *http.Request, req memory.ChatMessageRequest, resp memory.ChatMessageResponse) error {
