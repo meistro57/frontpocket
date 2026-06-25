@@ -22,6 +22,7 @@ type Server struct {
 	qdrant            *store.QdrantClient
 	redis             *store.RedisClient
 	memoryStore       memory.MemoryStore
+	mindDrillStore    memory.MemoryStore
 	ingestor          memory.Ingestor
 	contextPacker     memory.ContextPacker
 	defaultSearch     int
@@ -59,6 +60,17 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		cfg.Qdrant.Distance,
 		fallbackStore,
 	)
+	mindDrillStore := memory.MemoryStore(memory.NewInMemoryStore())
+	if cfg.MindDrillMemory.Enabled {
+		mindDrillStore = store.NewQdrantMemoryStore(
+			qdrant,
+			embedder,
+			cfg.MindDrillMemory.Collection,
+			cfg.Qdrant.VectorName,
+			cfg.Qdrant.Distance,
+			memory.NewInMemoryStore(),
+		)
+	}
 	ingestor := memory.Ingestor{
 		Chunker: memory.Chunker{
 			Size:    cfg.Chunking.Size,
@@ -83,6 +95,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		qdrant:            qdrant,
 		redis:             redis,
 		memoryStore:       memStore,
+		mindDrillStore:    mindDrillStore,
 		ingestor:          ingestor,
 		contextPacker:     memory.ContextPacker{Store: memStore},
 		defaultSearch:     cfg.Search.DefaultLimit,
@@ -147,6 +160,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /memory/stats", s.handleMemoryStats)
 	s.mux.HandleFunc("POST /memory/session", s.handleMemorySession)
 	s.mux.HandleFunc("DELETE /memory/session", s.handleMemorySessionDelete)
+	s.mux.HandleFunc("POST /memory/chat", s.handleMemoryChat)
+	if s.cfg.Dev.DebugEndpoints {
+		s.mux.HandleFunc("GET /minddrill/memory/stats", s.handleMindDrillMemoryStats)
+		s.mux.HandleFunc("POST /minddrill/memory/search", s.handleMindDrillMemorySearch)
+		s.mux.HandleFunc("DELETE /minddrill/memory/session", s.handleMindDrillMemorySessionDelete)
+	}
 }
 
 func selectEmbedder(cfg config.Config) (embed.Embedder, error) {

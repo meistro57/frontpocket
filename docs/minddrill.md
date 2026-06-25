@@ -2,9 +2,9 @@
 
 <img src="../MindDrill_logo.png" alt="MindDrill" width="140" />
 
-MindDrill is FrontPocket's built-in memory explorer: a single-page browser UI for searching
-your memory, building context packs, and viewing memory stats. The page is embedded directly
-in the binary, so there is nothing to install or build separately beyond `./make_all.sh`.
+MindDrill is FrontPocket's built-in memory explorer: a single-page browser UI for chat mode,
+searching your memory, building context packs, and viewing memory stats. The page is embedded
+directly in the binary, so there is nothing to install or build separately beyond `./make_all.sh`.
 
 ## Running
 
@@ -50,9 +50,34 @@ FrontPocket API calls, replacing the old hardcoded API constant.
 
 ## What it uses
 
-MindDrill is a thin client over the public-safe recall surface:
+MindDrill is a thin client over the FrontPocket API:
 
 - `GET /health` — connection status
 - `GET /memory/stats` — memory counts
 - `POST /memory/search` — semantic search
 - `POST /memory/context-pack` — assemble session context
+- `POST /memory/chat` — chat response with split memory context
+
+## Chat mode memory separation
+
+MindDrill chat keeps continuity in a dedicated Qdrant collection (`MINDDRILL_MEMORY_COLLECTION`,
+default `minddrill_chat_memory`) while FrontPocket imported corpus memory remains in the main
+`QDRANT_COLLECTION`. Both collections use the same Qdrant instance.
+
+When chat mode runs, it retrieves from both layers:
+
+- **MindDrill chat memory** for conversational continuity and session carry-over.
+- **FrontPocket source memory** for stronger source-backed evidence.
+
+The response includes:
+
+- `answer`
+- `used_frontpocket_memories`
+- `used_minddrill_memories`
+- `context_pack`
+- `model`
+- `provider`
+
+MindDrill writes new chat memory through the Go API only, using `MINDDRILL_MEMORY_WRITE_MODE`
+(`summary` by default, or `raw`) and periodic session summaries controlled by
+`MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY`.

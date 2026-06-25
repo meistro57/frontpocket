@@ -75,6 +75,7 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 		results = append(results, SearchResult{
 			MemoryID:            p.MemoryID,
 			ConversationID:      p.ConversationID,
+			SessionID:           p.SessionID,
 			SourceTitle:         p.SourceTitle,
 			SourceType:          p.SourceType,
 			Timestamp:           p.Timestamp,
@@ -85,6 +86,7 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 			Summary:             p.Summary,
 			SourceQuote:         p.SourceQuote,
 			Text:                p.Text,
+			UsedMemoryIDs:       append([]string(nil), p.UsedMemoryIDs...),
 			Score:               score,
 			EmbeddingProvider:   p.EmbeddingProvider,
 			EmbeddingModel:      p.EmbeddingModel,
@@ -135,6 +137,25 @@ func (s *InMemoryStore) Stats(_ context.Context, filters SearchFilters) (MemoryS
 	}
 
 	return stats, nil
+}
+
+func (s *InMemoryStore) DeleteByFilters(filters SearchFilters) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.points) == 0 {
+		return nil
+	}
+
+	filtered := make([]MemoryPoint, 0, len(s.points))
+	for _, point := range s.points {
+		if matchesFilters(point, filters) {
+			continue
+		}
+		filtered = append(filtered, point)
+	}
+	s.points = filtered
+	return nil
 }
 
 func scoreText(query, text string) float64 {

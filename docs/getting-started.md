@@ -20,6 +20,18 @@ returns CORS headers for it (the default already includes MindDrill's `:8089`):
 CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8089
 ```
 
+MindDrill chat memory defaults:
+
+```env
+MINDDRILL_MEMORY_COLLECTION=minddrill_chat_memory
+MINDDRILL_MEMORY_ENABLED=true
+MINDDRILL_MEMORY_WRITE_MODE=summary
+MINDDRILL_MEMORY_TOP_K=6
+MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY=8
+# Optional local helper endpoints for MindDrill session reset/search UI actions:
+# DEV_DEBUG_ENDPOINTS=true
+```
+
 ## 2) Build + ensure helper scripts are executable
 
 ```bash
@@ -70,7 +82,18 @@ curl -X POST http://localhost:8088/memory/session \
 curl -X DELETE 'http://localhost:8088/memory/session?session_id=frontpocket-dev'
 ```
 
-## 10) Ingest a ChatGPT export (zip or folder)
+## 10) Chat with dual memory retrieval
+
+```bash
+curl -X POST http://localhost:8088/memory/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","remember_this":true}'
+```
+
+The response includes `answer`, `used_frontpocket_memories`, `used_minddrill_memories`,
+`context_pack`, `model`, and `provider`.
+
+## 11) Ingest a ChatGPT export (zip or folder)
 
 ```bash
 frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run
@@ -84,7 +107,7 @@ Raw export `.zip` files are ignored by git (`*.zip`) by default.
 If you hit an embedding JSON decode error on large imports, rebuild with `./make_all.sh` to pick up the latest embedding response handling.
 If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest to pick up UUID-compatible Qdrant point IDs (look for `not a valid point ID` in logs when using older binaries).
 
-## 11) Explore memory in the browser (MindDrill)
+## 12) Explore memory in the browser (MindDrill)
 
 With the API running, launch the MindDrill memory explorer:
 
@@ -97,7 +120,7 @@ from its own origin and uses it to apply the `--api` target for all browser API 
 Ensure the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md`
 for options.
 
-## 12) Run tests
+## 13) Run tests
 
 ```bash
 go test ./...

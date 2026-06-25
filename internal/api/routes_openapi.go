@@ -191,6 +191,33 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+			"/memory/chat": map[string]any{
+				"post": map[string]any{
+					"operationId": "chatWithMemory",
+					"summary":     "Generate MindDrill chat response with split memory context",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/ChatMessageRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Chat response with memory usage details.",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ChatMessageResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"$ref": "#/components/responses/ValidationError"},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
+					},
+				},
+			},
 			"/memory/ingest/chat": map[string]any{
 				"post": map[string]any{
 					"operationId": "ingestChatMemory",
@@ -376,6 +403,7 @@ func (s *Server) openAPISpec() map[string]any {
 					"properties": map[string]any{
 						"memory_id":       map[string]any{"type": "string"},
 						"conversation_id": map[string]any{"type": "string"},
+						"session_id":      map[string]any{"type": "string"},
 						"source_title":    map[string]any{"type": "string"},
 						"source_type":     map[string]any{"type": "string"},
 						"timestamp":       map[string]any{"type": "string", "format": "date-time"},
@@ -391,6 +419,10 @@ func (s *Server) openAPISpec() map[string]any {
 							"type": "string",
 						},
 						"text": map[string]any{"type": "string"},
+						"used_memory_ids": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"type": "string"},
+						},
 						"score": map[string]any{
 							"type":   "number",
 							"format": "double",
@@ -529,6 +561,30 @@ func (s *Server) openAPISpec() map[string]any {
 					"properties": map[string]any{
 						"found": map[string]any{"type": "boolean"},
 						"state": map[string]any{"$ref": "#/components/schemas/SessionState"},
+					},
+				},
+				"ChatMessageRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"session_id", "message"},
+					"properties": map[string]any{
+						"session_id":        map[string]any{"type": "string", "minLength": 1},
+						"message":           map[string]any{"type": "string", "minLength": 1},
+						"project":           map[string]any{"type": "string"},
+						"frontpocket_top_k": map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.Search.MaxLimit},
+						"minddrill_top_k":   map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.Search.MaxLimit},
+						"remember_this":     map[string]any{"type": "boolean"},
+					},
+				},
+				"ChatMessageResponse": map[string]any{
+					"type":     "object",
+					"required": []string{"answer", "used_frontpocket_memories", "used_minddrill_memories", "context_pack", "model", "provider"},
+					"properties": map[string]any{
+						"answer":                    map[string]any{"type": "string"},
+						"used_frontpocket_memories": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SearchResult"}},
+						"used_minddrill_memories":   map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SearchResult"}},
+						"context_pack":              map[string]any{"type": "string"},
+						"model":                     map[string]any{"type": "string"},
+						"provider":                  map[string]any{"type": "string"},
 					},
 				},
 			},

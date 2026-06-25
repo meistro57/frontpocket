@@ -62,3 +62,30 @@ func TestRootServesRuntimeConfigAwareUI(t *testing.T) {
 		t.Fatalf("expected hardcoded API constant to be removed")
 	}
 }
+
+func TestMindDrillUINeverEmbedsServerSecrets(t *testing.T) {
+	testServer := httptest.NewServer(newHandler("http://localhost:8088"))
+	defer testServer.Close()
+
+	resp, err := http.Get(testServer.URL + "/")
+	if err != nil {
+		t.Fatalf("root request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed reading root response body: %v", err)
+	}
+	content := string(body)
+
+	if strings.Contains(content, "FRONTPOCKET_API_KEY") {
+		t.Fatal("expected UI to avoid exposing FRONTPOCKET_API_KEY")
+	}
+	if strings.Contains(content, "OPENAI_API_KEY") {
+		t.Fatal("expected UI to avoid exposing OPENAI_API_KEY")
+	}
+	if strings.Contains(content, "OPENROUTER_API_KEY") {
+		t.Fatal("expected UI to avoid exposing OPENROUTER_API_KEY")
+	}
+}

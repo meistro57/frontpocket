@@ -25,20 +25,27 @@ No crystal ball. Just retrieval with receipts.
 - **Retrieval endpoints:** search and context-pack with source metadata.
 - **Operational endpoints:** memory stats and session state for trusted usage.
 - **OpenAPI support:** served at `GET /openapi.json` for integrations.
-- **MindDrill UI:** a built-in, browser-based memory explorer for searching and building context packs.
+- **MindDrill UI:** a built-in, browser-based memory explorer with chat mode, search, and context-pack tools.
+- **MindDrill memory isolation:** dedicated MindDrill chat collection (`MINDDRILL_MEMORY_COLLECTION`) in the same Qdrant instance as the main corpus.
 - **CORS support:** configurable allowed origins so browser apps (including MindDrill) can call the API directly.
 
 ## API endpoints
 
 ```text
-GET  /health
-GET  /openapi.json
-GET  /memory/stats
+GET    /health
+GET    /openapi.json
+GET    /memory/stats
 POST   /memory/session
 DELETE /memory/session
 POST   /memory/ingest/chat
 POST   /memory/search
-POST /memory/context-pack
+POST   /memory/context-pack
+POST   /memory/chat
+
+# Optional local-only debug endpoints (when DEV_DEBUG_ENDPOINTS=true)
+GET    /minddrill/memory/stats
+POST   /minddrill/memory/search
+DELETE /minddrill/memory/session
 ```
 
 Public-safe recall surface remains:
@@ -79,6 +86,16 @@ origins they are served from:
 
 ```env
 CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8089
+```
+
+MindDrill chat memory defaults (separate collection, shared Qdrant engine):
+
+```env
+MINDDRILL_MEMORY_COLLECTION=minddrill_chat_memory
+MINDDRILL_MEMORY_ENABLED=true
+MINDDRILL_MEMORY_WRITE_MODE=summary
+MINDDRILL_MEMORY_TOP_K=6
+MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY=8
 ```
 
 The API reflects matching origins back via `Access-Control-Allow-Origin`, answers
@@ -173,6 +190,14 @@ curl -X POST http://localhost:8088/memory/session \
 
 Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce repeated vector lookups.
 
+Chat endpoint example (dual retrieval: FrontPocket corpus + MindDrill chat memory):
+
+```bash
+curl -X POST http://localhost:8088/memory/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","remember_this":true}'
+```
+
 ---
 
 ## MindDrill memory explorer
@@ -180,8 +205,9 @@ Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce re
 <img src="MindDrill_logo.png" alt="MindDrill" width="120" align="right" />
 
 MindDrill is a built-in, single-page browser UI for exploring your memory. It talks to the
-FrontPocket API to run semantic searches, build context packs, and view memory stats — no
-extra dependencies, the page is embedded directly in the binary.
+FrontPocket API to run semantic searches, build context packs, and run chat mode with split
+memory context (FrontPocket corpus memory + MindDrill chat memory) — no extra dependencies,
+the page is embedded directly in the binary.
 
 Start it from the main CLI (it uses the standalone `minddrill` binary if present on `PATH`,
 otherwise falls back to `go run ./cmd/minddrill`):
@@ -202,6 +228,15 @@ Then open the printed URL (default <http://localhost:8089>) in your browser. Min
 `/config.json` from its own origin and the page loads it at startup, so `--api` is applied to all
 FrontPocket API calls at runtime. Make sure the FrontPocket API is running and that the MindDrill
 origin is listed in `CORS_ALLOW_ORIGINS` (port `8089` is included in the default list).
+
+MindDrill chat mode now shows:
+
+- assistant answer
+- expandable "FrontPocket memories used"
+- expandable "MindDrill memories used"
+- "remember this" action
+- "forget this session" action (uses local-only debug delete when enabled)
+- status text (`using X FrontPocket memories + Y MindDrill memories`)
 
 ```bash
 frontpocket minddrill --help
