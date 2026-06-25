@@ -419,6 +419,51 @@ a:hover { text-decoration: underline; }
   max-height: 60vh;
   overflow-y: auto;
 }
+.chat-panel { display: flex; flex-direction: column; gap: .75rem; }
+.chat-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chat-row input {
+  flex: 1;
+  min-width: 240px;
+  height: 38px;
+  padding: 0 12px;
+  font-size: 14px;
+  border: 0.5px solid var(--border2);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  font-family: var(--font);
+}
+.chat-answer {
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: .85rem 1rem;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-meta {
+  font-size: 12px;
+  color: var(--text3);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-memory-status { font-size: 12px; color: var(--text2); }
+.chat-memory-block details {
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: .5rem .7rem;
+  margin-bottom: .5rem;
+}
+.chat-memory-block summary { cursor: pointer; font-size: 12px; color: var(--text2); }
+.chat-memory-list { margin-top: .5rem; display: flex; flex-direction: column; gap: .45rem; }
+.chat-memory-item { background: var(--bg2); border-radius: var(--radius); padding: .5rem .6rem; }
+.chat-memory-item-title { font-size: 11px; color: var(--text3); margin-bottom: 2px; }
+.chat-memory-item-body { font-size: 12px; color: var(--text2); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -477,12 +522,36 @@ a:hover { text-decoration: underline; }
   <main class="main">
 
     <div class="mode-tabs">
-      <div class="mode-tab active" onclick="setMode('search',this)">search</div>
+      <div class="mode-tab active" onclick="setMode('chat',this)">chat</div>
+      <div class="mode-tab" onclick="setMode('search',this)">search</div>
       <div class="mode-tab" onclick="setMode('context',this)">context pack</div>
       <div class="mode-tab" onclick="setMode('browse',this)">browse</div>
     </div>
 
-    <div id="panel-search">
+    <div id="panel-chat" class="chat-panel">
+      <div class="chat-row">
+        <input type="text" id="chat-input" placeholder="ask MindDrill chat…" />
+        <button class="btn btn-primary" onclick="doChat(false)" id="chat-send-btn"><span id="chat-send-icon">💬</span> send</button>
+        <button class="btn" onclick="doChat(true)" id="chat-remember-btn">remember this</button>
+        <button class="btn" onclick="forgetChatSession()" id="chat-forget-btn">forget this session</button>
+      </div>
+      <div class="chat-memory-status" id="chat-memory-status">using 0 FrontPocket memories + 0 MindDrill memories</div>
+      <div class="chat-meta"><span id="chat-session-id"></span><span id="chat-provider-model"></span></div>
+      <div id="chat-error"></div>
+      <div id="chat-answer" class="chat-answer">MindDrill chat is ready.</div>
+      <div class="chat-memory-block">
+        <details>
+          <summary>FrontPocket memories used</summary>
+          <div id="chat-front-memories" class="chat-memory-list"></div>
+        </details>
+        <details>
+          <summary>MindDrill memories used</summary>
+          <div id="chat-mind-memories" class="chat-memory-list"></div>
+        </details>
+      </div>
+    </div>
+
+    <div id="panel-search" style="display:none">
       <div class="search-bar">
         <input type="text" id="q" placeholder="search your memory… consciousness, steel, Eli, meta-bridge, GMLAN…" autofocus />
         <button class="btn btn-primary" onclick="doSearch()" id="search-btn">
@@ -550,6 +619,7 @@ let lastResults = [];
 let searchHistory = [];
 let browseItems = [];
 let browseOffset = null;
+let chatSessionId = '';
 
 const probes = [
   'Eli GPT awakening mind persona',
@@ -680,6 +750,7 @@ function setFilter(key, val, el) {
 function setMode(mode, el) {
   document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
+  document.getElementById('panel-chat').style.display    = mode === 'chat'    ? '' : 'none';
   document.getElementById('panel-search').style.display  = mode === 'search'  ? '' : 'none';
   document.getElementById('panel-context').style.display = mode === 'context' ? '' : 'none';
   document.getElementById('panel-browse').style.display  = mode === 'browse'  ? '' : 'none';
@@ -693,7 +764,7 @@ function buildProbes() {
     b.textContent = p;
     b.onclick = () => {
       document.getElementById('q').value = p;
-      setMode('search', document.querySelectorAll('.mode-tab')[0]);
+      setMode('search', document.querySelectorAll('.mode-tab')[1]);
       doSearch();
     };
     el.appendChild(b);
@@ -710,8 +781,91 @@ function addHistory(q) {
 
 function rerunSearch(q) {
   document.getElementById('q').value = q;
-  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  setMode('search', document.querySelectorAll('.mode-tab')[1]);
   doSearch();
+}
+
+function ensureChatSession() {
+  const stored = localStorage.getItem('minddrill-chat-session-id');
+  if (stored && stored.trim()) {
+    chatSessionId = stored.trim();
+  } else {
+    chatSessionId = `minddrill-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem('minddrill-chat-session-id', chatSessionId);
+  }
+  document.getElementById('chat-session-id').textContent = `session: ${chatSessionId}`;
+}
+
+function renderChatMemoryList(elId, items) {
+  const el = document.getElementById(elId);
+  if (!Array.isArray(items) || items.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">none used</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const quote = esc(item.source_quote || item.summary || item.text || '');
+    const kind = esc(item.memory_kind || 'memory');
+    const id = esc(item.memory_id || '');
+    return `<div class="chat-memory-item"><div class="chat-memory-item-title">${kind} • ${id}</div><div class="chat-memory-item-body">${quote}</div></div>`;
+  }).join('');
+}
+
+function renderChatResponse(data) {
+  const front = Array.isArray(data.used_frontpocket_memories) ? data.used_frontpocket_memories : [];
+  const mind = Array.isArray(data.used_minddrill_memories) ? data.used_minddrill_memories : [];
+  document.getElementById('chat-answer').textContent = data.answer || '';
+  document.getElementById('chat-memory-status').textContent = `using ${front.length} FrontPocket memories + ${mind.length} MindDrill memories`;
+  document.getElementById('chat-provider-model').textContent = `${data.provider || 'none'} / ${data.model || 'retrieval-only'}`;
+  renderChatMemoryList('chat-front-memories', front);
+  renderChatMemoryList('chat-mind-memories', mind);
+}
+
+async function doChat(rememberThis) {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  const btn = document.getElementById('chat-send-btn');
+  btn.disabled = true;
+  document.getElementById('chat-send-icon').innerHTML = '<span class="spinner"></span>';
+  document.getElementById('chat-error').innerHTML = '';
+
+  try {
+    const r = await fetch(apiURL('/memory/chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: chatSessionId, message, remember_this: !!rememberThis }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    renderChatResponse(d);
+  } catch (e) {
+    document.getElementById('chat-error').innerHTML = `<div class="error-box">Chat failed: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    document.getElementById('chat-send-icon').textContent = '💬';
+  }
+}
+
+async function forgetChatSession() {
+  document.getElementById('chat-error').innerHTML = '';
+  try {
+    const r = await fetch(apiURL(`/minddrill/memory/session?session_id=${encodeURIComponent(chatSessionId)}`), {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!r.ok && r.status !== 404) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    document.getElementById('chat-error').innerHTML = `<div class="error-box">Forget session failed: ${esc(e.message)}</div>`;
+  }
+
+  localStorage.removeItem('minddrill-chat-session-id');
+  ensureChatSession();
+  document.getElementById('chat-answer').textContent = 'MindDrill chat session reset.';
+  document.getElementById('chat-memory-status').textContent = 'using 0 FrontPocket memories + 0 MindDrill memories';
+  renderChatMemoryList('chat-front-memories', []);
+  renderChatMemoryList('chat-mind-memories', []);
 }
 
 async function doSearch() {
@@ -818,21 +972,21 @@ function drillDeeper(i, ns) {
   const title = p.source_title || p.title || 'this session';
   const quote = (p.source_quote || p.text || '').slice(0, 120);
   document.getElementById('q').value = `context for "${title}": ${quote}`;
-  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  setMode('search', document.querySelectorAll('.mode-tab')[1]);
   doSearch();
 }
 
 function sameConvo(i, ns) {
   const p = getItem(i, ns).payload || getItem(i, ns);
   document.getElementById('q').value = p.source_title || p.conversation_id || '';
-  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  setMode('search', document.querySelectorAll('.mode-tab')[1]);
   doSearch();
 }
 
 function findRelated(i, ns) {
   const p = getItem(i, ns).payload || getItem(i, ns);
   document.getElementById('q').value = (p.source_quote || p.text || '').slice(0, 80);
-  setMode('search', document.querySelectorAll('.mode-tab')[0]);
+  setMode('search', document.querySelectorAll('.mode-tab')[1]);
   doSearch();
 }
 
@@ -918,10 +1072,14 @@ async function fetchBrowsePage(reset) {
 
 document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 document.getElementById('ctx-q').addEventListener('keydown', e => { if (e.key === 'Enter') doContextPack(); });
+document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') doChat(false); });
 
 async function initApp() {
   initTheme();
   buildProbes();
+  ensureChatSession();
+  renderChatMemoryList('chat-front-memories', []);
+  renderChatMemoryList('chat-mind-memories', []);
   await loadConfig();
   await checkHealth();
   setInterval(checkHealth, 30000);

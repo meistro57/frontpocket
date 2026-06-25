@@ -106,3 +106,35 @@ func TestUpsertUsesQdrantCompatiblePointID(t *testing.T) {
 		t.Fatalf("expected payload memory_id %q, got %q", memoryID, capturedMemoryID)
 	}
 }
+
+func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	payload := toQdrantPayload(memory.MemoryPoint{
+		MemoryID:            "minddrill_session_1_0001",
+		ConversationID:      "session_1",
+		SessionID:           "session_1",
+		SourceType:          "minddrill_chat",
+		SourceTitle:         "MindDrill Chat",
+		Timestamp:           now,
+		Speaker:             "user",
+		MemoryKind:          memory.KindUserPreference,
+		Summary:             "Keep responses concise.",
+		Text:                "remember this: keep responses concise",
+		SourceQuote:         "remember this: keep responses concise",
+		UsedMemoryIDs:       []string{"front_1", "mind_2"},
+		EmbeddingProvider:   "ollama",
+		EmbeddingModel:      "nomic-embed-text",
+		EmbeddingDimensions: 4,
+	})
+
+	if payload["session_id"] != "session_1" {
+		t.Fatalf("expected payload session_id session_1, got %v", payload["session_id"])
+	}
+	ids, ok := payload["used_memory_ids"].([]string)
+	if !ok {
+		t.Fatalf("expected used_memory_ids []string, got %#v", payload["used_memory_ids"])
+	}
+	if len(ids) != 2 || ids[0] != "front_1" || ids[1] != "mind_2" {
+		t.Fatalf("unexpected used_memory_ids: %#v", ids)
+	}
+}

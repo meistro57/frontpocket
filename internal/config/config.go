@@ -9,18 +9,19 @@ import (
 )
 
 type Config struct {
-	App         AppConfig
-	Security    SecurityConfig
-	Qdrant      QdrantConfig
-	Redis       RedisConfig
-	Embedding   EmbeddingConfig
-	Chat        ChatConfig
-	Chunking    ChunkingConfig
-	Ingestion   IngestionConfig
-	Search      SearchConfig
-	ContextPack ContextPackConfig
-	Logging     LoggingConfig
-	Dev         DevConfig
+	App             AppConfig
+	Security        SecurityConfig
+	Qdrant          QdrantConfig
+	Redis           RedisConfig
+	Embedding       EmbeddingConfig
+	Chat            ChatConfig
+	MindDrillMemory MindDrillMemoryConfig
+	Chunking        ChunkingConfig
+	Ingestion       IngestionConfig
+	Search          SearchConfig
+	ContextPack     ContextPackConfig
+	Logging         LoggingConfig
+	Dev             DevConfig
 }
 
 type AppConfig struct {
@@ -64,7 +65,18 @@ type EmbeddingConfig struct {
 }
 
 type ChatConfig struct {
-	Provider string
+	Provider        string
+	OllamaModel     string
+	OpenAIModel     string
+	OpenRouterModel string
+}
+
+type MindDrillMemoryConfig struct {
+	Collection          string
+	Enabled             bool
+	WriteMode           string
+	TopK                int
+	SessionSummaryEvery int
 }
 
 type ChunkingConfig struct {
@@ -146,7 +158,17 @@ func Load() (Config, error) {
 			OpenRouterApp:  getEnv("OPENROUTER_APP_NAME", "FrontPocket"),
 		},
 		Chat: ChatConfig{
-			Provider: strings.ToLower(getEnv("CHAT_PROVIDER", "none")),
+			Provider:        strings.ToLower(getEnv("CHAT_PROVIDER", "none")),
+			OllamaModel:     getEnv("OLLAMA_CHAT_MODEL", "llama3.1"),
+			OpenAIModel:     getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+			OpenRouterModel: getEnv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini"),
+		},
+		MindDrillMemory: MindDrillMemoryConfig{
+			Collection:          getEnv("MINDDRILL_MEMORY_COLLECTION", "minddrill_chat_memory"),
+			Enabled:             getEnvBool("MINDDRILL_MEMORY_ENABLED", true),
+			WriteMode:           strings.ToLower(getEnv("MINDDRILL_MEMORY_WRITE_MODE", "summary")),
+			TopK:                getEnvInt("MINDDRILL_MEMORY_TOP_K", 6),
+			SessionSummaryEvery: getEnvInt("MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY", 8),
 		},
 		Chunking: ChunkingConfig{
 			Size:    getEnvInt("CHUNK_SIZE", 900),
@@ -231,6 +253,20 @@ func (c Config) Validate() error {
 	}
 	if c.ContextPack.UseSummarizer && c.Chat.Provider == "none" {
 		return errors.New("CHAT_PROVIDER cannot be none when CONTEXT_PACK_USE_SUMMARIZER=true")
+	}
+	if c.MindDrillMemory.Enabled && strings.TrimSpace(c.MindDrillMemory.Collection) == "" {
+		return errors.New("MINDDRILL_MEMORY_COLLECTION is required when MINDDRILL_MEMORY_ENABLED=true")
+	}
+	switch c.MindDrillMemory.WriteMode {
+	case "raw", "summary":
+	default:
+		return errors.New("MINDDRILL_MEMORY_WRITE_MODE must be raw or summary")
+	}
+	if c.MindDrillMemory.TopK <= 0 {
+		return errors.New("MINDDRILL_MEMORY_TOP_K must be greater than 0")
+	}
+	if c.MindDrillMemory.SessionSummaryEvery <= 0 {
+		return errors.New("MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY must be greater than 0")
 	}
 
 	switch c.Embedding.Provider {

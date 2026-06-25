@@ -84,6 +84,9 @@ func TestOpenAPIEndpoint(t *testing.T) {
 	if _, ok := sessionPath["delete"]; !ok {
 		t.Fatal("DELETE /memory/session missing from openapi paths")
 	}
+	if _, ok := paths["/memory/chat"]; !ok {
+		t.Fatal("/memory/chat missing from openapi paths")
+	}
 	if _, ok := paths["/memory/ingest/chat"]; !ok {
 		t.Fatal("/memory/ingest/chat missing from openapi paths")
 	}
@@ -102,6 +105,12 @@ func TestOpenAPIEndpoint(t *testing.T) {
 	}
 	if _, ok := schemas["SessionResponse"]; !ok {
 		t.Fatal("SessionResponse schema missing from openapi components")
+	}
+	if _, ok := schemas["ChatMessageRequest"]; !ok {
+		t.Fatal("ChatMessageRequest schema missing from openapi components")
+	}
+	if _, ok := schemas["ChatMessageResponse"]; !ok {
+		t.Fatal("ChatMessageResponse schema missing from openapi components")
 	}
 
 	parameters, ok := components["parameters"].(map[string]any)

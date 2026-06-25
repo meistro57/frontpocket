@@ -14,6 +14,11 @@ const (
 	KindRelationship      = "relationship_context"
 	KindResearchNote      = "research_note"
 	KindSystemNote        = "system_note"
+	KindChatTurn          = "chat_turn"
+	KindSessionSummary    = "session_summary"
+	KindUserPreference    = "user_preference"
+	KindProjectDecision   = "project_decision"
+	KindToolResult        = "tool_result"
 )
 
 type MessageRecord struct {
@@ -31,6 +36,7 @@ type MessageRecord struct {
 type MemoryPoint struct {
 	MemoryID            string    `json:"memory_id"`
 	ConversationID      string    `json:"conversation_id"`
+	SessionID           string    `json:"session_id,omitempty"`
 	SourceType          string    `json:"source_type"`
 	SourceTitle         string    `json:"source_title"`
 	Timestamp           time.Time `json:"timestamp"`
@@ -42,6 +48,7 @@ type MemoryPoint struct {
 	Text                string    `json:"text"`
 	SourceQuote         string    `json:"source_quote"`
 	Summary             string    `json:"summary,omitempty"`
+	UsedMemoryIDs       []string  `json:"used_memory_ids,omitempty"`
 	EmbeddingProvider   string    `json:"embedding_provider"`
 	EmbeddingModel      string    `json:"embedding_model"`
 	EmbeddingDimensions int       `json:"embedding_dimensions"`
@@ -66,6 +73,7 @@ type SearchRequest struct {
 type SearchResult struct {
 	MemoryID            string    `json:"memory_id"`
 	ConversationID      string    `json:"conversation_id"`
+	SessionID           string    `json:"session_id,omitempty"`
 	SourceTitle         string    `json:"source_title"`
 	SourceType          string    `json:"source_type"`
 	Timestamp           time.Time `json:"timestamp"`
@@ -76,6 +84,7 @@ type SearchResult struct {
 	Summary             string    `json:"summary"`
 	SourceQuote         string    `json:"source_quote,omitempty"`
 	Text                string    `json:"text,omitempty"`
+	UsedMemoryIDs       []string  `json:"used_memory_ids,omitempty"`
 	Score               float64   `json:"score"`
 	EmbeddingProvider   string    `json:"embedding_provider"`
 	EmbeddingModel      string    `json:"embedding_model"`
@@ -140,6 +149,24 @@ type SessionState struct {
 type SessionResponse struct {
 	Found bool          `json:"found"`
 	State *SessionState `json:"state,omitempty"`
+}
+
+type ChatMessageRequest struct {
+	SessionID       string `json:"session_id"`
+	Message         string `json:"message"`
+	Project         string `json:"project,omitempty"`
+	FrontPocketTopK int    `json:"frontpocket_top_k,omitempty"`
+	MindDrillTopK   int    `json:"minddrill_top_k,omitempty"`
+	RememberThis    bool   `json:"remember_this,omitempty"`
+}
+
+type ChatMessageResponse struct {
+	Answer                  string         `json:"answer"`
+	UsedFrontPocketMemories []SearchResult `json:"used_frontpocket_memories"`
+	UsedMindDrillMemories   []SearchResult `json:"used_minddrill_memories"`
+	ContextPack             string         `json:"context_pack"`
+	Model                   string         `json:"model"`
+	Provider                string         `json:"provider"`
 }
 
 type ErrorEnvelope struct {

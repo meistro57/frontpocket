@@ -331,6 +331,27 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 	return stats, nil
 }
 
+func (s *QdrantMemoryStore) DeleteByFilters(ctx context.Context, filters memory.SearchFilters) error {
+	if strings.TrimSpace(s.collection) == "" {
+		return fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+	filter := toQdrantFilter(filters)
+	if filter == nil {
+		return nil
+	}
+
+	_, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/delete?wait=true", s.collection), map[string]any{"filter": filter}, nil)
+	if err != nil {
+		return err
+	}
+	if fallbackDelete, ok := s.fallback.(interface {
+		DeleteByFilters(memory.SearchFilters) error
+	}); ok {
+		_ = fallbackDelete.DeleteByFilters(filters)
+	}
+	return nil
+}
+
 func (s *QdrantMemoryStore) ensureCollection(ctx context.Context, dims int) error {
 	if s.collection == "" {
 		return fmt.Errorf("QDRANT_COLLECTION is required")
@@ -489,6 +510,7 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 	return map[string]any{
 		"memory_id":            point.MemoryID,
 		"conversation_id":      point.ConversationID,
+		"session_id":           point.SessionID,
 		"source_type":          point.SourceType,
 		"source_title":         point.SourceTitle,
 		"timestamp":            point.Timestamp.Format(time.RFC3339),
@@ -500,6 +522,7 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 		"text":                 point.Text,
 		"source_quote":         point.SourceQuote,
 		"summary":              point.Summary,
+		"used_memory_ids":      point.UsedMemoryIDs,
 		"embedding_provider":   point.EmbeddingProvider,
 		"embedding_model":      point.EmbeddingModel,
 		"embedding_dimensions": point.EmbeddingDimensions,
@@ -510,6 +533,7 @@ func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResul
 	return memory.SearchResult{
 		MemoryID:            asString(payload["memory_id"]),
 		ConversationID:      asString(payload["conversation_id"]),
+		SessionID:           asString(payload["session_id"]),
 		SourceTitle:         asString(payload["source_title"]),
 		SourceType:          asString(payload["source_type"]),
 		Timestamp:           asTime(payload["timestamp"]),
@@ -520,6 +544,7 @@ func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResul
 		Summary:             asString(payload["summary"]),
 		SourceQuote:         asString(payload["source_quote"]),
 		Text:                asString(payload["text"]),
+		UsedMemoryIDs:       asStringSlice(payload["used_memory_ids"]),
 		Score:               score,
 		EmbeddingProvider:   asString(payload["embedding_provider"]),
 		EmbeddingModel:      asString(payload["embedding_model"]),
