@@ -161,7 +161,7 @@ func Load() (Config, error) {
 			Provider:        strings.ToLower(getEnv("CHAT_PROVIDER", "none")),
 			OllamaModel:     getEnv("OLLAMA_CHAT_MODEL", "llama3.1"),
 			OpenAIModel:     getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
-			OpenRouterModel: getEnv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini"),
+			OpenRouterModel: getEnv("OPENROUTER_CHAT_MODEL", "google/gemma-4-31b-it"),
 		},
 		MindDrillMemory: MindDrillMemoryConfig{
 			Collection:          getEnv("MINDDRILL_MEMORY_COLLECTION", "minddrill_chat_memory"),
@@ -267,6 +267,19 @@ func (c Config) Validate() error {
 	}
 	if c.MindDrillMemory.SessionSummaryEvery <= 0 {
 		return errors.New("MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY must be greater than 0")
+	}
+
+	switch c.Chat.Provider {
+	case "none", "":
+	case "openrouter":
+		if strings.TrimSpace(c.Embedding.OpenRouterKey) == "" {
+			return errors.New("OPENROUTER_API_KEY is required when CHAT_PROVIDER=openrouter")
+		}
+		if strings.TrimSpace(c.Chat.OpenRouterModel) == "" {
+			return errors.New("OPENROUTER_CHAT_MODEL is required when CHAT_PROVIDER=openrouter")
+		}
+	default:
+		return fmt.Errorf("unsupported CHAT_PROVIDER: %s", c.Chat.Provider)
 	}
 
 	switch c.Embedding.Provider {

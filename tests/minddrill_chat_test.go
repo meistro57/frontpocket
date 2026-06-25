@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/meistro57/frontpocket/internal/api"
@@ -245,4 +246,101 @@ func TestMindDrillChatSessionDeleteRouteAvailableWithoutDebugEndpoints(t *testin
 func stringsValue(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func TestMemoryChatUsesOpenRouterGemmaForAnswer(t *testing.T) {
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float64{{0.1, 0.2, 0.3, 0.4}}})
+	}))
+	defer embeddingServer.Close()
+
+	var requestedModel string
+	chatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-openrouter-key" {
+			t.Fatalf("expected OpenRouter bearer auth, got %q", auth)
+		}
+		var req struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("failed decoding OpenRouter request: %v", err)
+		}
+		requestedModel = req.Model
+		if len(req.Messages) != 2 || req.Messages[1].Role != "user" || !strings.Contains(req.Messages[1].Content, "USER MESSAGE:") {
+			t.Fatalf("expected context-pack user message, got %#v", req.Messages)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "content": "Gemma 4 answer from OpenRouter."},
+			}},
+		})
+	}))
+	defer chatServer.Close()
+
+	cfg := config.Config{
+		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088, PublicURL: "http://localhost:8088"},
+		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
+		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Embedding: config.EmbeddingConfig{
+			Provider:       "ollama",
+			OllamaModel:    "nomic-embed-text",
+			OllamaBaseURL:  embeddingServer.URL,
+			Dimensions:     4,
+			OpenRouterKey:  "test-openrouter-key",
+			OpenRouterURL:  chatServer.URL,
+			OpenRouterApp:  "FrontPocket Test",
+			OpenRouterSite: "http://localhost:8088",
+		},
+		Chat: config.ChatConfig{Provider: "openrouter", OpenRouterModel: "google/gemma-4-31b-it"},
+		MindDrillMemory: config.MindDrillMemoryConfig{
+			Collection:          "minddrill_chat_memory",
+			Enabled:             false,
+			WriteMode:           "summary",
+			TopK:                6,
+			SessionSummaryEvery: 8,
+		},
+		Ingestion:   config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},
+		Chunking:    config.ChunkingConfig{Size: 900, Overlap: 150, MinSize: 120},
+		Search:      config.SearchConfig{DefaultLimit: 5, MaxLimit: 20, CacheTTLSeconds: 30},
+		ContextPack: config.ContextPackConfig{DefaultLimit: 8, MaxLimit: 20},
+	}
+
+	srv, err := api.NewServer(cfg, logfp.NewDiscard())
+	if err != nil {
+		t.Fatalf("failed creating server: %v", err)
+	}
+	testServer := httptest.NewServer(srv.Handler())
+	defer testServer.Close()
+
+	chatPayload, _ := json.Marshal(memory.ChatMessageRequest{SessionID: "gemma_sess", Message: "What do we know?"})
+	chatResp, err := http.Post(testServer.URL+"/memory/chat", "application/json", bytes.NewReader(chatPayload))
+	if err != nil {
+		t.Fatalf("chat request failed: %v", err)
+	}
+	defer chatResp.Body.Close()
+	if chatResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from chat endpoint, got %d", chatResp.StatusCode)
+	}
+	var body memory.ChatMessageResponse
+	if err := json.NewDecoder(chatResp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding chat response failed: %v", err)
+	}
+	if body.Answer != "Gemma 4 answer from OpenRouter." {
+		t.Fatalf("expected OpenRouter answer, got %q", body.Answer)
+	}
+	if body.Provider != "openrouter" || body.Model != "google/gemma-4-31b-it" || requestedModel != "google/gemma-4-31b-it" {
+		t.Fatalf("expected OpenRouter Gemma 4 metadata, provider=%q model=%q requested=%q", body.Provider, body.Model, requestedModel)
+	}
 }

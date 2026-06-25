@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/meistro57/frontpocket/internal/chat"
 	"github.com/meistro57/frontpocket/internal/config"
 	"github.com/meistro57/frontpocket/internal/embed"
 	"github.com/meistro57/frontpocket/internal/memory"
@@ -25,6 +26,7 @@ type Server struct {
 	mindDrillStore    memory.MemoryStore
 	ingestor          memory.Ingestor
 	contextPacker     memory.ContextPacker
+	chatClient        chat.Client
 	defaultSearch     int
 	maxSearch         int
 	minSearchScore    float64
@@ -47,6 +49,11 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	embedder, err := selectEmbedder(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	chatClient, err := selectChatClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +105,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		mindDrillStore:    mindDrillStore,
 		ingestor:          ingestor,
 		contextPacker:     memory.ContextPacker{Store: memStore},
+		chatClient:        chatClient,
 		defaultSearch:     cfg.Search.DefaultLimit,
 		maxSearch:         cfg.Search.MaxLimit,
 		minSearchScore:    cfg.Search.MinScore,
@@ -186,5 +194,22 @@ func selectEmbedder(cfg config.Config) (embed.Embedder, error) {
 		), nil
 	default:
 		return nil, fmt.Errorf("unsupported EMBEDDING_PROVIDER: %s", cfg.Embedding.Provider)
+	}
+}
+
+func selectChatClient(cfg config.Config) (chat.Client, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Chat.Provider)) {
+	case "none", "":
+		return nil, nil
+	case "openrouter":
+		return chat.NewOpenRouterClient(
+			cfg.Embedding.OpenRouterURL,
+			cfg.Chat.OpenRouterModel,
+			cfg.Embedding.OpenRouterKey,
+			cfg.Embedding.OpenRouterSite,
+			cfg.Embedding.OpenRouterApp,
+		), nil
+	default:
+		return nil, fmt.Errorf("unsupported CHAT_PROVIDER for /memory/chat: %s", cfg.Chat.Provider)
 	}
 }
