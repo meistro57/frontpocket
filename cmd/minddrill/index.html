@@ -544,7 +544,7 @@ a:hover { text-decoration: underline; }
 </div>
 
 <script>
-const API = 'http://localhost:8088';
+let API = '';
 let activeFilters = { speaker: 'all' };
 let lastResults = [];
 let searchHistory = [];
@@ -595,6 +595,30 @@ function formatDate(ts) {
 }
 function fmtNum(n) { return (n != null) ? Number(n).toLocaleString() : '—'; }
 
+function apiURL(path) {
+  return `${API}${path}`;
+}
+
+async function loadConfig() {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('status-text');
+  txt.textContent = 'loading config…';
+  try {
+    const r = await fetch('/config.json', { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const base = typeof d.api_base_url === 'string' ? d.api_base_url.trim() : '';
+    if (!base) throw new Error('missing api_base_url');
+    API = base.replace(/\/+$/, '');
+  } catch (e) {
+    dot.className = 'dot err';
+    txt.textContent = 'config error';
+    document.getElementById('error-area').innerHTML =
+      `<div class="error-box">Could not load MindDrill config.json (${esc(e.message)})</div>`;
+    throw e;
+  }
+}
+
 function initTheme() {
   const saved = localStorage.getItem('minddrill-theme');
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -618,7 +642,7 @@ async function checkHealth() {
   const dot = document.getElementById('dot');
   const txt = document.getElementById('status-text');
   try {
-    const r = await fetch(`${API}/health`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(apiURL('/health'), { signal: AbortSignal.timeout(4000) });
     if (r.ok) {
       dot.className = 'dot ok';
       txt.textContent = 'connected';
@@ -635,7 +659,7 @@ async function checkHealth() {
 
 async function loadStats() {
   try {
-    const r = await fetch(`${API}/memory/stats`);
+    const r = await fetch(apiURL('/memory/stats'));
     if (!r.ok) return;
     const d = await r.json();
     // FrontPocket returns { total, by_kind, by_speaker, by_project }
@@ -702,7 +726,7 @@ async function doSearch() {
   document.getElementById('results-label').textContent = 'searching…';
 
   try {
-    const r = await fetch(`${API}/memory/search`, {
+    const r = await fetch(apiURL('/memory/search'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: q, limit: limit * 2 }),
@@ -829,7 +853,7 @@ async function doContextPack() {
   document.getElementById('ctx-error').innerHTML = '';
   document.getElementById('ctx-result').innerHTML = '<div class="empty-state">packing context…</div>';
   try {
-    const r = await fetch(`${API}/memory/context-pack`, {
+    const r = await fetch(apiURL('/memory/context-pack'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: q, limit }),
@@ -868,7 +892,7 @@ async function fetchBrowsePage(reset) {
   if (browseOffset) body.offset = browseOffset;
   if (speaker) body.filter = { speaker };
   try {
-    const r = await fetch(`${API}/memory/search`, {
+    const r = await fetch(apiURL('/memory/search'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -895,10 +919,15 @@ async function fetchBrowsePage(reset) {
 document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 document.getElementById('ctx-q').addEventListener('keydown', e => { if (e.key === 'Enter') doContextPack(); });
 
-initTheme();
-buildProbes();
-checkHealth();
-setInterval(checkHealth, 30000);
+async function initApp() {
+  initTheme();
+  buildProbes();
+  await loadConfig();
+  await checkHealth();
+  setInterval(checkHealth, 30000);
+}
+
+initApp();
 </script>
 </body>
 </html>

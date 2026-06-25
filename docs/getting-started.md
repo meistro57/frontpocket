@@ -92,8 +92,10 @@ With the API running, launch the MindDrill memory explorer:
 frontpocket minddrill          # or: minddrill / go run ./cmd/minddrill
 ```
 
-Open the printed URL (default <http://localhost:8089>). Ensure the MindDrill origin is
-listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md` for options.
+Open the printed URL (default <http://localhost:8089>). MindDrill serves `/config.json`
+from its own origin and uses it to apply the `--api` target for all browser API calls.
+Ensure the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md`
+for options.
 
 ## 12) Run tests
 
