@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meistro57/frontpocket/internal/chat"
+
 	"github.com/meistro57/frontpocket/internal/config"
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/store"
@@ -98,8 +100,15 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contextPack := buildMindDrillPrompt(req.Message, mindResults, frontResults)
-	answer := buildMindDrillAnswer(req.Message, mindResults, frontResults)
-	provider, model := chatProviderModel(s.cfg.Chat)
+	answer, provider, model, err := s.generateChatAnswer(r, req.Message, contextPack, mindResults, frontResults)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, memory.ErrorBody{
+			Code:    "CHAT_COMPLETION_FAILED",
+			Message: "Chat provider failed to generate a response.",
+			Detail:  err.Error(),
+		})
+		return
+	}
 
 	resp := memory.ChatMessageResponse{
 		Answer:                  answer,
@@ -117,6 +126,28 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) generateChatAnswer(r *http.Request, message, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
+	provider, model := chatProviderModel(s.cfg.Chat)
+	if s.chatClient == nil {
+		return buildMindDrillAnswer(message, mind, front), provider, model, nil
+	}
+
+	answer, err := s.chatClient.Complete(r.Context(), []chat.Message{
+		{
+			Role:    "system",
+			Content: "You are Eli inside FrontPocket. Answer the user with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections.",
+		},
+		{
+			Role:    "user",
+			Content: contextPack,
+		},
+	})
+	if err != nil {
+		return "", provider, model, err
+	}
+	return answer, s.chatClient.ProviderName(), s.chatClient.ModelName(), nil
 }
 
 func (s *Server) handleMindDrillMemoryStats(w http.ResponseWriter, r *http.Request) {
