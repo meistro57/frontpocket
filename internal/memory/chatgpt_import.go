@@ -61,15 +61,15 @@ type chatGPTSource struct {
 }
 
 type chatGPTNode struct {
-	NodeID        string
-	ParentID      string
-	MessageID     string
-	Role          string
-	ContentType   string
-	Text          string
-	MessageTime   time.Time
-	MessageCreate string
-	MessageUpdate string
+	NodeID         string
+	ParentID       string
+	MessageID      string
+	Role           string
+	ContentType    string
+	Text           string
+	MessageTime    time.Time
+	MessageCreate  string
+	MessageUpdate  string
 	HasAttachment  bool
 	AttachmentRefs []string
 	SupportedText  bool
