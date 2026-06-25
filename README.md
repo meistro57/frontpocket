@@ -198,9 +198,10 @@ minddrill --port 9000                  # custom port
 minddrill --api http://localhost:8088  # point at a non-default API base URL
 ```
 
-Then open the printed URL (default <http://localhost:8089>) in your browser. Make sure the
-FrontPocket API is running and that the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`
-(port `8089` is included in the default list).
+Then open the printed URL (default <http://localhost:8089>) in your browser. MindDrill serves
+`/config.json` from its own origin and the page loads it at startup, so `--api` is applied to all
+FrontPocket API calls at runtime. Make sure the FrontPocket API is running and that the MindDrill
+origin is listed in `CORS_ALLOW_ORIGINS` (port `8089` is included in the default list).
 
 ```bash
 frontpocket minddrill --help

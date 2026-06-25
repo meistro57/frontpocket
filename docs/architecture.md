@@ -22,6 +22,7 @@ Qdrant (long-term semantic memory)
 - Qdrant collection dimensions are validated against embedding output.
 - The API applies CORS as the outermost middleware (configured via `CORS_ALLOW_ORIGINS`), so browser clients can call it directly and `OPTIONS` preflight is handled before auth.
 - MindDrill is a separate, static browser UI (`cmd/minddrill`) that is purely an API client — it stores nothing itself and never bypasses the API boundary.
+- MindDrill serves `GET /config.json` from its own origin to publish the configured FrontPocket API base URL (`--api`) at runtime, so the UI has no hardcoded backend URL.
 
 ## Endpoint groups
 

@@ -32,7 +32,13 @@ Then open the printed URL (default <http://localhost:8089>) in your browser.
 | `--port` | `8089`                   | Port to serve the MindDrill UI on.   |
 | `--api`  | `http://localhost:8088`  | FrontPocket API base URL to call.    |
 
-It also exposes `GET /health` returning `{"status":"ok","app":"minddrill"}`.
+It also exposes:
+
+- `GET /health` returning `{"status":"ok","app":"minddrill"}`
+- `GET /config.json` returning `{"api_base_url":"<--api value>"}`
+
+The embedded page loads `/config.json` on startup and uses that runtime value for all
+FrontPocket API calls, replacing the old hardcoded API constant.
 
 ## Requirements
 

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,45 @@ import (
 
 //go:embed index.html logo.png
 var assets embed.FS
+
+func newHandler(apiBaseURL string) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		data, err := assets.ReadFile("index.html")
+		if err != nil {
+			http.Error(w, "could not read index.html", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+
+	mux.HandleFunc("GET /logo.png", func(w http.ResponseWriter, r *http.Request) {
+		data, err := assets.ReadFile("logo.png")
+		if err != nil {
+			http.Error(w, "could not read logo.png", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(data)
+	})
+
+	mux.HandleFunc("GET /config.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_ = json.NewEncoder(w).Encode(map[string]string{"api_base_url": apiBaseURL})
+	})
+
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","app":"minddrill"}`)
+	})
+
+	return mux
+}
 
 func main() {
 	flags := flag.NewFlagSet("minddrill", flag.ContinueOnError)
@@ -46,34 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		data, err := assets.ReadFile("index.html")
-		if err != nil {
-			http.Error(w, "could not read index.html", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = w.Write(data)
-	})
-
-	mux.HandleFunc("GET /logo.png", func(w http.ResponseWriter, r *http.Request) {
-		data, err := assets.ReadFile("logo.png")
-		if err != nil {
-			http.Error(w, "could not read logo.png", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		_, _ = w.Write(data)
-	})
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","app":"minddrill"}`)
-	})
+	mux := newHandler(*api)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", *port),
