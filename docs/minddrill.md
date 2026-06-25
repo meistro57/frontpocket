@@ -1,5 +1,7 @@
 # MindDrill
 
+<img src="../MindDrill_logo.png" alt="MindDrill" width="140" />
+
 MindDrill is FrontPocket's built-in memory explorer: a single-page browser UI for searching
 your memory, building context packs, and viewing memory stats. The page is embedded directly
 in the binary, so there is nothing to install or build separately beyond `./make_all.sh`.

@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-//go:embed index.html
-var indexHTML embed.FS
+//go:embed index.html logo.png
+var assets embed.FS
 
 func main() {
 	flags := flag.NewFlagSet("minddrill", flag.ContinueOnError)
@@ -49,13 +49,24 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		data, err := indexHTML.ReadFile("index.html")
+		data, err := assets.ReadFile("index.html")
 		if err != nil {
 			http.Error(w, "could not read index.html", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+
+	mux.HandleFunc("GET /logo.png", func(w http.ResponseWriter, r *http.Request) {
+		data, err := assets.ReadFile("logo.png")
+		if err != nil {
+			http.Error(w, "could not read logo.png", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
 		_, _ = w.Write(data)
 	})
 

@@ -177,6 +177,8 @@ Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce re
 
 ## MindDrill memory explorer
 
+<img src="MindDrill_logo.png" alt="MindDrill" width="120" align="right" />
+
 MindDrill is a built-in, single-page browser UI for exploring your memory. It talks to the
 FrontPocket API to run semantic searches, build context packs, and view memory stats — no
 extra dependencies, the page is embedded directly in the binary.
