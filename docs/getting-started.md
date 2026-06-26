@@ -87,9 +87,10 @@ curl -X DELETE 'http://localhost:8088/memory/session?session_id=frontpocket-dev'
 ```bash
 curl -X POST http://localhost:8088/memory/chat \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","remember_this":true}'
+  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","system_prompt":"Use a concise, practical persona and call out uncertainty.","remember_this":true}'
 ```
 
+The optional `system_prompt` field is for persona or tone guidance on the chat turn.
 The response includes `answer`, `used_frontpocket_memories`, `used_minddrill_memories`,
 `context_pack`, `model`, and `provider`.
 

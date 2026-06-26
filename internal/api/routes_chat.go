@@ -28,6 +28,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	req.Message = strings.TrimSpace(req.Message)
+	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.Project = strings.TrimSpace(req.Project)
 	if req.SessionID == "" {
 		writeError(w, http.StatusBadRequest, memory.ErrorBody{
@@ -99,8 +100,8 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 		mindResults = s.filterResults(mindResults)
 	}
 
-	contextPack := buildMindDrillPrompt(req.Message, mindResults, frontResults)
-	answer, provider, model, err := s.generateChatAnswer(r, req.Message, contextPack, mindResults, frontResults)
+	contextPack := buildMindDrillPrompt(req.Message, req.SystemPrompt, mindResults, frontResults)
+	answer, provider, model, err := s.generateChatAnswer(r, req.Message, req.SystemPrompt, contextPack, mindResults, frontResults)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, memory.ErrorBody{
 			Code:    "CHAT_COMPLETION_FAILED",
@@ -128,16 +129,21 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) generateChatAnswer(r *http.Request, message, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
+func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
 	provider, model := chatProviderModel(s.cfg.Chat)
 	if s.chatClient == nil {
 		return buildMindDrillAnswer(message, mind, front), provider, model, nil
 	}
 
+	baseSystemPrompt := "You are Eli inside FrontPocket. Answer the user with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections."
+	if trimmed := strings.TrimSpace(systemPrompt); trimmed != "" {
+		baseSystemPrompt += "\n\nUser-provided persona/system prompt information:\n" + trimmed
+	}
+
 	answer, err := s.chatClient.Complete(r.Context(), []chat.Message{
 		{
 			Role:    "system",
-			Content: "You are Eli inside FrontPocket. Answer the user with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections.",
+			Content: baseSystemPrompt,
 		},
 		{
 			Role:    "user",
@@ -356,10 +362,16 @@ func (s *Server) newMindDrillPoint(req memory.ChatMessageRequest, now time.Time,
 	}
 }
 
-func buildMindDrillPrompt(message string, mind, front []memory.SearchResult) string {
+func buildMindDrillPrompt(message, systemPrompt string, mind, front []memory.SearchResult) string {
 	var b strings.Builder
 	b.WriteString("SYSTEM:\n")
-	b.WriteString("You are Eli. Be direct, source-aware, and explicit about uncertainty.\n\n")
+	b.WriteString("You are Eli. Be direct, source-aware, and explicit about uncertainty.\n")
+	if trimmed := strings.TrimSpace(systemPrompt); trimmed != "" {
+		b.WriteString("User-provided persona/system prompt information:\n")
+		b.WriteString(trimmed)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("MINDDRILL CHAT MEMORY:\n")
 	b.WriteString("These are memories from prior MindDrill chats. Use them as conversational continuity, not as absolute fact.\n")
 	b.WriteString(formatMemoryList(mind))

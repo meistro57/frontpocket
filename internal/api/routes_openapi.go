@@ -569,6 +569,7 @@ func (s *Server) openAPISpec() map[string]any {
 					"properties": map[string]any{
 						"session_id":        map[string]any{"type": "string", "minLength": 1},
 						"message":           map[string]any{"type": "string", "minLength": 1},
+						"system_prompt":     map[string]any{"type": "string", "description": "Optional user-provided persona or system prompt guidance for this chat turn."},
 						"project":           map[string]any{"type": "string"},
 						"frontpocket_top_k": map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.Search.MaxLimit},
 						"minddrill_top_k":   map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.Search.MaxLimit},
