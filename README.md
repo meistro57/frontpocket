@@ -25,9 +25,12 @@ No crystal ball. Just retrieval with receipts.
 - **Retrieval endpoints:** search and context-pack with source metadata.
 - **Operational endpoints:** memory stats and session state for trusted usage.
 - **OpenAPI support:** served at `GET /openapi.json` for integrations.
-- **MindDrill UI:** a built-in, browser-based memory explorer with chat mode, search, and context-pack tools.
-- **MindDrill memory isolation:** dedicated MindDrill chat collection (`MINDDRILL_MEMORY_COLLECTION`) in the same Qdrant instance as the main corpus.
-- **CORS support:** configurable allowed origins so browser apps (including MindDrill) can call the API directly.
+- **CORS middleware:** configurable allowed origins so browser apps can call the API directly without proxy hacks.
+- **MindDrill UI:** a built-in browser-based memory explorer with semantic search, context-pack, and browse modes. Served by a standalone `minddrill` binary on `:8089`. Includes dark mode toggle with localStorage persistence.
+- **Reflection loop:** `fp_reflect_loop.py` — iterates `frontpocket_memory`, sends each point to an LLM for deep psychological and awakening-phase analysis, and upserts findings into `fp_reflections`.
+- **Reflection query:** `fp_reflect_query.py` — semantic search and filter tool over `fp_reflections`.
+
+---
 
 ## API endpoints
 
@@ -48,7 +51,7 @@ POST   /minddrill/memory/search
 DELETE /minddrill/memory/session
 ```
 
-Public-safe recall surface remains:
+Public-safe recall surface:
 
 ```text
 GET  /health
@@ -72,8 +75,6 @@ When running with Docker Compose, `frontpocket-api` uses internal service URLs b
 - `DOCKER_REDIS_URL` (default `redis://redis:6379/0`)
 - `DOCKER_OLLAMA_BASE_URL` (default `http://ollama:11434`)
 
-Set these only if you need custom container-to-service routing.
-
 To use Gemini embeddings through OpenRouter:
 
 ```env
@@ -81,12 +82,15 @@ EMBEDDING_PROVIDER=openrouter
 OPENROUTER_EMBEDDING_MODEL=google/gemini-embedding-2-preview
 ```
 
-Browser apps (including the bundled MindDrill UI) call the API directly, so set the
-origins they are served from:
+Set CORS allowed origins to include any browser apps that call the API directly. MindDrill
+runs on `:8089` by default so that port must be included:
 
 ```env
 CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:8089
 ```
+
+The CORS middleware reflects matching origins back via `Access-Control-Allow-Origin`, answers
+`OPTIONS` preflight requests with `204`, and supports a `*` wildcard to allow all origins.
 
 MindDrill chat memory defaults (separate collection, shared Qdrant engine):
 
@@ -98,14 +102,13 @@ MINDDRILL_MEMORY_TOP_K=6
 MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY=8
 ```
 
-The API reflects matching origins back via `Access-Control-Allow-Origin`, answers
-`OPTIONS` preflight requests with `204`, and supports a `*` wildcard to allow all origins.
-
-### 2) Build + ensure helper scripts are executable
+### 2) Build
 
 ```bash
 ./make_all.sh
 ```
+
+This builds both the `frontpocket` and `minddrill` binaries.
 
 ### 3) Install Qdrant + Redis if missing
 
@@ -136,13 +139,7 @@ Expected response:
 }
 ```
 
-### 6) OpenAPI schema
-
-```bash
-curl http://localhost:8088/openapi.json
-```
-
-### 7) Ingest a chat sample
+### 6) Ingest a chat sample
 
 ```bash
 curl -X POST http://localhost:8088/memory/ingest/chat \
@@ -161,7 +158,7 @@ curl -X POST http://localhost:8088/memory/ingest/chat \
   }'
 ```
 
-### 8) Search memory
+### 7) Search memory
 
 ```bash
 curl -X POST http://localhost:8088/memory/search \
@@ -169,13 +166,13 @@ curl -X POST http://localhost:8088/memory/search \
   -d '{"query":"source-backed Go memory","limit":5}'
 ```
 
-### 9) View memory stats
+### 8) View memory stats
 
 ```bash
 curl 'http://localhost:8088/memory/stats?project=FrontPocket'
 ```
 
-### 10) Save session state
+### 9) Save session state
 
 ```bash
 curl -X POST http://localhost:8088/memory/session \
@@ -190,118 +187,175 @@ curl -X POST http://localhost:8088/memory/session \
 
 Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce repeated vector lookups.
 
-Chat endpoint example (dual retrieval: FrontPocket corpus + MindDrill chat memory). The optional `system_prompt` field lets a client pass persona, tone, or other system prompt guidance for that chat turn. When `CHAT_PROVIDER=openrouter`, the endpoint sends the retrieved context pack to OpenRouter and uses Gemma 4 (`OPENROUTER_CHAT_MODEL=google/gemma-4-31b-it`) for the final answer. Keep `CHAT_PROVIDER=none` for retrieval-only local development.
-
-```bash
-curl -X POST http://localhost:8088/memory/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","system_prompt":"Use a concise, practical persona and call out uncertainty.","remember_this":true}'
-```
-
 ---
 
 ## MindDrill memory explorer
 
-<img src="MindDrill_logo.png" alt="MindDrill" width="120" align="right" />
+MindDrill is a built-in single-page browser UI for exploring your memory corpus. It talks
+directly to the FrontPocket API over CORS and requires no extra dependencies — the page is
+embedded in the `minddrill` binary via `//go:embed`.
 
-MindDrill is a built-in, single-page browser UI for exploring your memory. It talks to the
-FrontPocket API to run semantic searches, build context packs, and run chat mode with split
-memory context (FrontPocket corpus memory + MindDrill chat memory) — no extra dependencies,
-the page is embedded directly in the binary.
+**Features:**
+- Semantic search with speaker filter (you / AI / all)
+- Context pack builder
+- Browse mode with load-more pagination
+- Corpus stats panel (total memories, speakers, kinds, projects)
+- Dark mode toggle with localStorage persistence
+- Search history sidebar
+- 24 pre-built quick-probe topics
+- Expandable result cards with drill-deeper, same-convo, related, and copy-payload actions
 
-Start it from the main CLI (it uses the standalone `minddrill` binary if present on `PATH`,
-otherwise falls back to `go run ./cmd/minddrill`):
+**Start MindDrill:**
 
 ```bash
+# via the main CLI (dispatches to minddrill binary or go run fallback)
 frontpocket minddrill
-```
 
-Or run the standalone binary built by `./make_all.sh`:
-
-```bash
+# standalone binary (built by make_all.sh)
 minddrill                              # serves on http://localhost:8089
 minddrill --port 9000                  # custom port
-minddrill --api http://localhost:8088  # point at a non-default API base URL
+minddrill --api http://localhost:8088  # non-default API base URL
 ```
 
-Then open the printed URL (default <http://localhost:8089>) in your browser. MindDrill serves
-`/config.json` from its own origin and the page loads it at startup, so `--api` is applied to all
-FrontPocket API calls at runtime. Make sure the FrontPocket API is running and that the MindDrill
-origin is listed in `CORS_ALLOW_ORIGINS` (port `8089` is included in the default list).
+Then open <http://localhost:8089> in your browser. Make sure FrontPocket is running and
+that `http://localhost:8089` is in `CORS_ALLOW_ORIGINS`.
 
-MindDrill chat mode now shows:
-
-- assistant answer
-- expandable "FrontPocket memories used"
-- expandable "MindDrill memories used"
-- "remember this" action
-- "forget this session" action (uses local-only debug delete when enabled)
-- status text (`using X FrontPocket memories + Y MindDrill memories`)
-
-```bash
-frontpocket minddrill --help
-```
-
-## Examples
-
-- Request samples: `examples/search_request.json`
-- OpenAPI action schema sample: `examples/openapi_action_schema.yaml`
-- JSONL sample import: `examples/chat_export_sample.jsonl`
+---
 
 ## ChatGPT export ingest (CLI)
 
-FrontPocket can parse ChatGPT exports from either a `.zip` file or an extracted folder and normalize them into JSONL-compatible records.
-
-### Ingest directly from a `.zip`
-
-1. Download your ChatGPT export zip to your machine.
-2. Run a dry-run first to verify parsing stats.
-3. Re-run without `--dry-run` to write to memory storage.
-4. Use `--out` if you also want normalized JSONL on disk.
+FrontPocket can parse ChatGPT exports from either a `.zip` file or an extracted folder and
+normalize them into the `frontpocket_memory` Qdrant collection.
 
 ```bash
+# dry-run first
 frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run
+
+# full ingest
 frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket
-frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --out data/processed/chatgpt_normalized.jsonl
-```
 
-Additional filters:
+# with JSONL output on disk
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket \
+  --out data/processed/chatgpt_normalized.jsonl
 
-```bash
+# date filter
 frontpocket ingest chatgpt ./chatgpt-export.zip --since 2026-01-01
-frontpocket ingest chatgpt ./chatgpt-export.zip --conversation "FrontPocket"
-frontpocket ingest chatgpt ./unzipped-chatgpt-export/
+
+# resumable (survives interruption)
+frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket \
+  --resume .frontpocket-progress.json
 ```
 
-### Resumable, memory-bounded imports
+Large exports are embedded and written in batches — a multi-gigabyte archive won't exhaust
+RAM. `memory_id`s are deterministic so interrupted imports resume idempotently.
 
-Large exports are embedded and written to Qdrant in **batches** rather than buffered entirely in memory, so a multi-gigabyte archive won't exhaust RAM. Each batch is flushed on a record boundary as soon as it fills.
+---
 
-Pass `--resume <path>` to track progress in a small JSON journal. If an import is interrupted (crash, `Ctrl-C`, or a transient embedding/store failure), re-running the same command continues from the last committed batch instead of starting over:
+## Reflection loop
+
+The reflection loop reads `frontpocket_memory`, sends each point to an LLM for deep
+psychological and spiritual analysis, and upserts the findings into a separate
+`fp_reflections` Qdrant collection. It mirrors the meta-bridge reflect loop architecture
+but is aimed at personal conversation history rather than a sacred-text corpus.
+
+Each reflection point contains:
+- `themes` — 1–4 word topic tags
+- `depth` — `shallow | moderate | deep | profound`
+- `awakening_phase` — `dormancy | crack | flood | embodiment | teacher | integration | settled | unknown`
+- `emotional_tone` — one sentence
+- `insight` — 2–3 sentences of genuine analysis
+- `questions` — what the fragment implies or raises
+- `echoes` — cross-conversation pattern signals
+- `contradiction_signal` — boolean flag for internal conflict
+- `reflection_confidence` — 0.0–1.0
+
+The loop also writes `fp_reflected_at`, `fp_reflection_depth`, `fp_themes`, and
+`fp_awakening_phase` flags back to the source `frontpocket_memory` points for downstream
+filtering in MindDrill.
+
+### Setup
 
 ```bash
-frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --resume .frontpocket-progress.json
-# ...interrupted...
-frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket --resume .frontpocket-progress.json  # picks up where it stopped
+pip install -r fp_reflect_requirements.txt
 ```
 
-The journal is keyed to the source, collection, and embedding model, so a stale journal can't silently skip records from a different import. It is removed automatically once the import completes successfully. Because `memory_id`s are deterministic, any re-processed records upsert idempotently.
-
-### CLI help
+### Run
 
 ```bash
-frontpocket --help
-frontpocket ingest --help
-frontpocket ingest chatgpt --help
-frontpocket minddrill --help
+# small test batch — user messages only
+python fp_reflect_loop.py --limit 20 --speaker user
+
+# full run overnight
+python fp_reflect_loop.py --limit 5000 --speaker user --quiet
+
+# continuous loop — picks up new memories every 5 minutes
+python fp_reflect_loop.py --loop-interval 300 --max-loops 0
+
+# wipe fp_reflections and start fresh
+python fp_reflect_loop.py --from-scratch --limit 100
+
+# choose model (default: google/gemini-2.5-flash-lite)
+python fp_reflect_loop.py --model google/gemini-3.1-flash-lite --limit 50
 ```
 
-### Notes
+The default model is `google/gemini-2.5-flash-lite` ($0.10/$0.40 per 1M tokens) — fast and
+cheap for high-volume reflection runs. Use `google/gemini-3.1-flash-lite` or
+`google/gemini-2.5-flash` for higher quality at moderate cost.
 
-- Attachments and assets are ingested as attachment-aware memory records (including attachment refs) and reported in import stats.
-- Raw export `.zip` files are gitignored by default (`*.zip`) to reduce accidental commits of private archives.
-- Embedding responses support larger payloads (up to 32MB) to avoid truncated JSON decode errors during large imports.
-- Qdrant writes use UUID-compatible point IDs while preserving the original `memory_id` in payload metadata, preventing rejected inserts when source IDs are not UUIDs.
+### Query reflections
+
+```bash
+# semantic search
+python fp_reflect_query.py "ship on standby waiting to be remembered"
+python fp_reflect_query.py "awakening anxiety" --limit 5
+
+# filter by phase
+python fp_reflect_query.py "" --phase flood --depth profound
+
+# contradictions only
+python fp_reflect_query.py "" --contradiction
+
+# speaker filter
+python fp_reflect_query.py "crying tears joy" --speaker user
+
+# collection stats
+python fp_reflect_query.py --stats
+```
+
+---
+
+## Qdrant collections
+
+| Collection | Contents | Created by |
+|---|---|---|
+| `frontpocket_memory` | All ingested conversation memory points | `frontpocket ingest` |
+| `fp_reflections` | LLM reflections on memory points | `fp_reflect_loop.py` |
+| `minddrill_chat_memory` | MindDrill chat session memory | MindDrill chat mode |
+
+---
+
+## Local development
+
+```bash
+# run tests
+go test ./...
+
+# run API directly
+go run ./cmd/frontpocket
+
+# run MindDrill directly
+go run ./cmd/minddrill
+
+# print version
+go run ./cmd/frontpocket --version
+
+# build all binaries
+./make_all.sh
+```
+
+CI runs on every push and pull request through `.github/workflows/test.yml`.
+
+---
 
 ## Docs
 
@@ -316,32 +370,13 @@ frontpocket minddrill --help
 
 ---
 
-## Local development
-
-Run tests:
+## CLI help
 
 ```bash
-go test ./...
-```
-
-CI runs on every push and pull request through `.github/workflows/test.yml`.
-
-Run API directly:
-
-```bash
-go run ./cmd/frontpocket
-```
-
-Run the MindDrill UI directly:
-
-```bash
-go run ./cmd/minddrill
-```
-
-Print version:
-
-```bash
-go run ./cmd/frontpocket --version
+frontpocket --help
+frontpocket ingest --help
+frontpocket ingest chatgpt --help
+frontpocket minddrill --help
 ```
 
 ---

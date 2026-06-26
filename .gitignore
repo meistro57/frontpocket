@@ -21,6 +21,15 @@ coverage.out
 /frontpocket
 /minddrill
 
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
 # Logs
 *.log
 logs/
