@@ -60,7 +60,7 @@ MindDrill is a thin client over the FrontPocket API:
 - `GET /memory/stats` — memory counts
 - `POST /memory/search` — semantic search
 - `POST /memory/context-pack` — assemble session context
-- `POST /memory/chat` — chat response with split memory context
+- `POST /memory/chat` — chat response with split memory context and optional `system_prompt` persona guidance
 - `DELETE /memory/chat/session` — clear the current MindDrill chat session and its chat memory
 
 ## Chat mode memory separation
@@ -68,6 +68,8 @@ MindDrill is a thin client over the FrontPocket API:
 MindDrill chat keeps continuity in a dedicated Qdrant collection (`MINDDRILL_MEMORY_COLLECTION`,
 default `minddrill_chat_memory`) while FrontPocket imported corpus memory remains in the main
 `QDRANT_COLLECTION`. Both collections use the same Qdrant instance.
+
+The main chat screen also includes a **persona** button for optional system prompt information such as tone, role, or behavioural boundaries. MindDrill stores that browser setting locally and sends it as `system_prompt` with chat turns; it is not written into memory unless the user explicitly asks chat mode to remember it.
 
 When chat mode runs, it retrieves from both layers:
 

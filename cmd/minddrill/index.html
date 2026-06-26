@@ -434,6 +434,32 @@ a:hover { text-decoration: underline; }
   outline: none;
   font-family: var(--font);
 }
+.system-prompt-panel {
+  display: none;
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: .85rem 1rem;
+}
+.system-prompt-panel.show { display: block; }
+.system-prompt-help { font-size: 12px; color: var(--text2); line-height: 1.5; margin-bottom: .55rem; }
+.system-prompt-panel textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 0.5px solid var(--border2);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  color: var(--text);
+  outline: none;
+  font-family: var(--font);
+}
+.system-prompt-panel textarea:focus { border-color: var(--purple-border); }
+.system-prompt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+.system-prompt-status { font-size: 12px; color: var(--text3); }
 .chat-answer {
   background: var(--bg);
   border: 0.5px solid var(--border);
@@ -533,7 +559,17 @@ a:hover { text-decoration: underline; }
         <input type="text" id="chat-input" placeholder="ask MindDrill chat…" />
         <button class="btn btn-primary" onclick="doChat(false)" id="chat-send-btn"><span id="chat-send-icon">💬</span> send</button>
         <button class="btn" onclick="doChat(true)" id="chat-remember-btn">remember this</button>
+        <button class="btn" onclick="toggleSystemPromptPanel()" id="system-prompt-toggle" title="add persona or other system prompt guidance">⚙️ persona</button>
         <button class="btn" onclick="forgetChatSession()" id="chat-forget-btn">forget this session</button>
+      </div>
+      <div class="system-prompt-panel" id="system-prompt-panel">
+        <div class="system-prompt-help">Add optional system prompt information for MindDrill chat, such as persona, tone, boundaries, or role instructions. It stays in this browser and is sent with chat turns; it is not stored as memory unless you explicitly ask the chat to remember it.</div>
+        <textarea id="system-prompt-input" maxlength="4000" placeholder="Example: Use a practical, source-aware persona. Keep replies concise and note when memory is uncertain."></textarea>
+        <div class="system-prompt-actions">
+          <button class="btn btn-sm btn-primary" onclick="saveSystemPrompt()">save prompt info</button>
+          <button class="btn btn-sm" onclick="clearSystemPrompt()">clear</button>
+          <span class="system-prompt-status" id="system-prompt-status">not set</span>
+        </div>
       </div>
       <div class="chat-memory-status" id="chat-memory-status">using 0 FrontPocket memories + 0 MindDrill memories</div>
       <div class="chat-meta"><span id="chat-session-id"></span><span id="chat-provider-model"></span></div>
@@ -622,6 +658,7 @@ let browseOffset = null;
 let chatSessionId = '';
 let chatFrontMemories = [];
 let chatMindMemories = [];
+let systemPromptInfo = '';
 
 const probes = [
   'Eli GPT awakening mind persona',
@@ -838,6 +875,45 @@ function rerunSearch(q) {
   doSearch();
 }
 
+function loadSystemPrompt() {
+  systemPromptInfo = localStorage.getItem('minddrill-system-prompt-info') || '';
+  const input = document.getElementById('system-prompt-input');
+  if (input) input.value = systemPromptInfo;
+  updateSystemPromptStatus();
+}
+
+function updateSystemPromptStatus(message) {
+  const status = document.getElementById('system-prompt-status');
+  const toggle = document.getElementById('system-prompt-toggle');
+  const hasPrompt = systemPromptInfo.trim().length > 0;
+  if (status) status.textContent = message || (hasPrompt ? `${systemPromptInfo.trim().length} chars saved` : 'not set');
+  if (toggle) toggle.textContent = hasPrompt ? '⚙️ persona set' : '⚙️ persona';
+}
+
+function toggleSystemPromptPanel() {
+  document.getElementById('system-prompt-panel').classList.toggle('show');
+}
+
+function saveSystemPrompt() {
+  const input = document.getElementById('system-prompt-input');
+  systemPromptInfo = (input?.value || '').trim();
+  if (systemPromptInfo) {
+    localStorage.setItem('minddrill-system-prompt-info', systemPromptInfo);
+    updateSystemPromptStatus('saved');
+  } else {
+    localStorage.removeItem('minddrill-system-prompt-info');
+    updateSystemPromptStatus('cleared');
+  }
+}
+
+function clearSystemPrompt() {
+  systemPromptInfo = '';
+  localStorage.removeItem('minddrill-system-prompt-info');
+  const input = document.getElementById('system-prompt-input');
+  if (input) input.value = '';
+  updateSystemPromptStatus('cleared');
+}
+
 function ensureChatSession() {
   const stored = localStorage.getItem('minddrill-chat-session-id');
   if (stored && stored.trim()) {
@@ -875,6 +951,9 @@ async function doChat(rememberThis) {
   const message = input.value.trim();
   if (!message) return;
 
+  const promptInput = document.getElementById('system-prompt-input');
+  systemPromptInfo = (promptInput?.value || systemPromptInfo).trim();
+
   const btn = document.getElementById('chat-send-btn');
   btn.disabled = true;
   document.getElementById('chat-send-icon').innerHTML = '<span class="spinner"></span>';
@@ -884,7 +963,12 @@ async function doChat(rememberThis) {
     const d = await fetchJSON('/memory/chat', {
       method: 'POST',
       headers: jsonHeaders(),
-      body: JSON.stringify({ session_id: chatSessionId, message, remember_this: !!rememberThis }),
+      body: JSON.stringify({
+        session_id: chatSessionId,
+        message,
+        system_prompt: systemPromptInfo.trim(),
+        remember_this: !!rememberThis,
+      }),
     }, 20000);
     renderChatResponse(d);
   } catch (e) {

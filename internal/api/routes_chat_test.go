@@ -34,7 +34,7 @@ func TestBuildMindDrillPromptIncludesSeparateMemorySections(t *testing.T) {
 		ConversationID: "mind_conv",
 	}}
 
-	prompt := buildMindDrillPrompt("keep the Eli vibe", mind, front)
+	prompt := buildMindDrillPrompt("keep the Eli vibe", "", mind, front)
 
 	if !strings.Contains(prompt, "MINDDRILL CHAT MEMORY:") {
 		t.Fatalf("expected prompt to include MindDrill memory section, got: %s", prompt)
@@ -44,5 +44,16 @@ func TestBuildMindDrillPromptIncludesSeparateMemorySections(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "USER MESSAGE:") {
 		t.Fatalf("expected prompt to include user message section, got: %s", prompt)
+	}
+}
+
+func TestBuildMindDrillPromptIncludesSystemPromptInfo(t *testing.T) {
+	prompt := buildMindDrillPrompt("hello", "Respond as a concise workshop guide.", nil, nil)
+
+	if !strings.Contains(prompt, "User-provided persona/system prompt information:") {
+		t.Fatalf("expected prompt to include system prompt heading, got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Respond as a concise workshop guide.") {
+		t.Fatalf("expected prompt to include supplied system prompt info, got: %s", prompt)
 	}
 }

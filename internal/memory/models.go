@@ -162,6 +162,7 @@ type ChatSessionDeleteResponse struct {
 type ChatMessageRequest struct {
 	SessionID       string `json:"session_id"`
 	Message         string `json:"message"`
+	SystemPrompt    string `json:"system_prompt,omitempty"`
 	Project         string `json:"project,omitempty"`
 	FrontPocketTopK int    `json:"frontpocket_top_k,omitempty"`
 	MindDrillTopK   int    `json:"minddrill_top_k,omitempty"`

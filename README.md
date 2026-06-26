@@ -190,12 +190,12 @@ curl -X POST http://localhost:8088/memory/session \
 
 Search responses are cached in Redis for `SEARCH_CACHE_TTL_SECONDS` to reduce repeated vector lookups.
 
-Chat endpoint example (dual retrieval: FrontPocket corpus + MindDrill chat memory). When `CHAT_PROVIDER=openrouter`, the endpoint sends the retrieved context pack to OpenRouter and uses Gemma 4 (`OPENROUTER_CHAT_MODEL=google/gemma-4-31b-it`) for the final answer. Keep `CHAT_PROVIDER=none` for retrieval-only local development.
+Chat endpoint example (dual retrieval: FrontPocket corpus + MindDrill chat memory). The optional `system_prompt` field lets a client pass persona, tone, or other system prompt guidance for that chat turn. When `CHAT_PROVIDER=openrouter`, the endpoint sends the retrieved context pack to OpenRouter and uses Gemma 4 (`OPENROUTER_CHAT_MODEL=google/gemma-4-31b-it`) for the final answer. Keep `CHAT_PROVIDER=none` for retrieval-only local development.
 
 ```bash
 curl -X POST http://localhost:8088/memory/chat \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","remember_this":true}'
+  -d '{"session_id":"minddrill-dev","message":"remember this: keep responses concise","system_prompt":"Use a concise, practical persona and call out uncertainty.","remember_this":true}'
 ```
 
 ---
