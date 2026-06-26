@@ -6,8 +6,11 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -17,16 +20,18 @@ import (
 )
 
 type QdrantClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL        string
+	http           *http.Client
+	logger         *slog.Logger
+	requestTimeout time.Duration
 }
 
 func NewQdrantClient(url string) *QdrantClient {
 	return &QdrantClient{
 		baseURL: strings.TrimRight(url, "/"),
-		http: &http.Client{
-			Timeout: 8 * time.Second,
-		},
+		http: &http.Client{},
+		logger: slog.Default(),
+		requestTimeout: 30 * time.Second,
 	}
 }
 
@@ -61,8 +66,26 @@ func (c *QdrantClient) doJSON(ctx context.Context, method, path string, payload 
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	callCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && c.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+		req = req.WithContext(callCtx)
+	}
+
+	started := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if isTimeoutError(err) {
+			if c.logger != nil {
+				c.logger.Warn("qdrant request timed out", "method", method, "path", path, "timeout", c.requestTimeout.String(), "elapsed_ms", time.Since(started).Milliseconds())
+			}
+			return 0, fmt.Errorf("qdrant request timed out for %s %s: %w", method, path, err)
+		}
+		if c.logger != nil {
+			c.logger.Warn("qdrant request failed", "method", method, "path", path, "error", err.Error(), "elapsed_ms", time.Since(started).Milliseconds())
+		}
 		return 0, err
 	}
 	defer resp.Body.Close()
@@ -72,7 +95,11 @@ func (c *QdrantClient) doJSON(ctx context.Context, method, path string, payload 
 		return resp.StatusCode, err
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		return resp.StatusCode, fmt.Errorf("qdrant responded with status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		message := strings.TrimSpace(string(respBody))
+		if c.logger != nil {
+			c.logger.Warn("qdrant responded with error status", "method", method, "path", path, "status", resp.StatusCode, "body", message, "elapsed_ms", time.Since(started).Milliseconds())
+		}
+		return resp.StatusCode, fmt.Errorf("qdrant responded with status %d: %s", resp.StatusCode, message)
 	}
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
@@ -121,11 +148,14 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 		return nil
 	}
 
-	dims := points[0].EmbeddingDimensions
-	if dims <= 0 {
-		dims = len(points[0].Vector)
+	if err := s.populateVectors(ctx, points); err != nil {
+		if s.fallback != nil {
+			return s.fallback.Upsert(ctx, points)
+		}
+		return err
 	}
 
+	dims := inferEmbeddingDimensions(points)
 	if err := s.ensureCollection(ctx, dims); err != nil {
 		if _, ok := err.(*DimensionMismatchError); ok {
 			return err
@@ -175,6 +205,51 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 		_ = s.fallback.Upsert(ctx, points)
 	}
 	return nil
+}
+
+func (s *QdrantMemoryStore) populateVectors(ctx context.Context, points []memory.MemoryPoint) error {
+	for i := range points {
+		if len(points[i].Vector) > 0 {
+			if points[i].EmbeddingDimensions <= 0 {
+				points[i].EmbeddingDimensions = len(points[i].Vector)
+			}
+			continue
+		}
+		if s.embedder == nil {
+			return fmt.Errorf("memory point %q has no vector and embedder is not configured", strings.TrimSpace(points[i].MemoryID))
+		}
+
+		text := strings.TrimSpace(points[i].Text)
+		if text == "" {
+			text = strings.TrimSpace(points[i].Summary)
+		}
+		if text == "" {
+			text = strings.TrimSpace(points[i].SourceQuote)
+		}
+		if text == "" {
+			return fmt.Errorf("memory point %q has no vectorizable text", strings.TrimSpace(points[i].MemoryID))
+		}
+
+		vector, err := s.embedder.EmbedText(ctx, text)
+		if err != nil {
+			return err
+		}
+		points[i].Vector = vector
+		points[i].EmbeddingDimensions = len(vector)
+	}
+	return nil
+}
+
+func inferEmbeddingDimensions(points []memory.MemoryPoint) int {
+	for _, point := range points {
+		if point.EmbeddingDimensions > 0 {
+			return point.EmbeddingDimensions
+		}
+		if len(point.Vector) > 0 {
+			return len(point.Vector)
+		}
+	}
+	return 0
 }
 
 func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest) ([]memory.SearchResult, error) {
@@ -474,6 +549,14 @@ func isUUID(value string) bool {
 
 func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func toQdrantFilter(filters memory.SearchFilters) map[string]any {

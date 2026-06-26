@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,25 @@ func TestParseVectorSizeMissingNamedEntry(t *testing.T) {
 	raw := json.RawMessage(`{"memory":{"size":1536,"distance":"Cosine"}}`)
 	if got := parseVectorSize(raw, "other"); got != 0 {
 		t.Fatalf("expected size 0 for missing vector name, got %d", got)
+	}
+}
+
+func TestDoJSONUsesDefaultTimeoutWhenContextHasNoDeadline(t *testing.T) {
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(40 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"result":[]}`)
+	}))
+	defer qdrant.Close()
+
+	client := NewQdrantClient(qdrant.URL)
+	client.requestTimeout = 10 * time.Millisecond
+
+	_, err := client.doJSON(context.Background(), http.MethodGet, "/collections", nil, nil)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error message, got %v", err)
 	}
 }
 
@@ -107,6 +127,63 @@ func TestUpsertUsesQdrantCompatiblePointID(t *testing.T) {
 	}
 }
 
+func TestUpsertEmbedsPointsWithoutVector(t *testing.T) {
+	var embedInput string
+	var capturedVector []float64
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/minddrill_chat_memory":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/minddrill_chat_memory/points":
+			var req struct {
+				Points []struct {
+					Vector []float64 `json:"vector"`
+				} `json:"points"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("failed decoding qdrant upsert payload: %v", err)
+			}
+			if len(req.Points) != 1 {
+				t.Fatalf("expected one point, got %d", len(req.Points))
+			}
+			capturedVector = req.Points[0].Vector
+			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	embedder := &testEmbedder{embedText: func(_ context.Context, text string) ([]float32, error) {
+		embedInput = text
+		return []float32{0.11, 0.22, 0.33, 0.44}, nil
+	}}
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), embedder, "minddrill_chat_memory", "", "Cosine", nil)
+	err := memStore.Upsert(context.Background(), []memory.MemoryPoint{{
+		MemoryID:       "minddrill_session_1_0001",
+		ConversationID: "session_1",
+		SourceType:     "minddrill_chat",
+		SourceTitle:    "MindDrill Chat",
+		Timestamp:      time.Now().UTC(),
+		Speaker:        "user",
+		MemoryKind:     memory.KindChatTurn,
+		Text:           "remember this detail",
+		SourceQuote:    "remember this detail",
+		Summary:        "remember this detail",
+	}})
+	if err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	if embedInput != "remember this detail" {
+		t.Fatalf("expected embed input to come from point text, got %q", embedInput)
+	}
+	if len(capturedVector) != 4 {
+		t.Fatalf("expected embedded vector in qdrant payload, got %#v", capturedVector)
+	}
+}
+
 func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
 	now := time.Now().UTC()
 	payload := toQdrantPayload(memory.MemoryPoint{
@@ -137,4 +214,35 @@ func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
 	if len(ids) != 2 || ids[0] != "front_1" || ids[1] != "mind_2" {
 		t.Fatalf("unexpected used_memory_ids: %#v", ids)
 	}
+}
+
+type testEmbedder struct {
+	embedText func(ctx context.Context, text string) ([]float32, error)
+}
+
+func (t *testEmbedder) EmbedText(ctx context.Context, text string) ([]float32, error) {
+	if t.embedText == nil {
+		return []float32{}, nil
+	}
+	return t.embedText(ctx, text)
+}
+
+func (t *testEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		vector, err := t.EmbedText(ctx, text)
+		if err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, vector)
+	}
+	return vectors, nil
+}
+
+func (t *testEmbedder) ProviderName() string {
+	return "test"
+}
+
+func (t *testEmbedder) ModelName() string {
+	return "test-model"
 }
