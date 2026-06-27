@@ -49,6 +49,9 @@ PROJECT_HINT_KEYWORDS = {
     "audio": ("Audio Tools", "source_title_keyword", 0.6),
     "awakening infinite potential": ("Awakening Infinite Potential", "source_title_keyword", 0.9),
     "operation new earth": ("Operation New Earth", "source_title_keyword", 0.9),
+    "best llms for lm studio": ("LM Studio / Local LLM Setup", "source_title_keyword", 0.9),
+    "lm studio": ("LM Studio / Local LLM Setup", "source_title_keyword", 0.8),
+    "nvidia": ("LM Studio / Local LLM Setup", "source_title_keyword", 0.75),
 }
 
 
@@ -85,10 +88,10 @@ def normalize_timestamp(value: Any) -> Tuple[Optional[str], Optional[str]]:
 
 def infer_project_hint(payload: Dict[str, Any]) -> Tuple[Optional[str], str, float]:
     source_title = str(payload.get("source_title") or "").lower()
-    tags = " ".join([str(t).lower() for t in payload.get("tags") or []])
-    text = " ".join([source_title, tags, str(payload.get("project") or "").lower()])
+    if source_title == "":
+        return None, "source_title_missing", 0.0
     for keyword, value in PROJECT_HINT_KEYWORDS.items():
-        if keyword in text:
+        if keyword in source_title:
             return value
     return None, "none", 0.0
 
@@ -126,7 +129,7 @@ def detect_quote_quality(quote: str) -> Tuple[str, List[str], bool]:
     return "complete", warnings, chunk_boundary_warning
 
 
-def classify_phase_applicability(payload: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+def classify_domain(payload: Dict[str, Any]) -> str:
     blob = " ".join(
         [
             str(payload.get("source_title") or "").lower(),
@@ -138,12 +141,110 @@ def classify_phase_applicability(payload: Dict[str, Any]) -> Tuple[str, Optional
     has_spiritual = any(k in blob for k in SPIRITUAL_KEYWORDS)
     has_technical = any(k in blob for k in TECHNICAL_KEYWORDS)
     if has_spiritual and has_technical:
-        return "uncertain", "mixed_spiritual_technical_signals"
+        return "mixed"
     if has_spiritual:
-        return "applicable", None
+        return "spiritual"
     if has_technical:
+        return "technical"
+    return "general"
+
+
+def classify_phase_applicability(payload: Dict[str, Any], speaker_normalized: str, domain: str) -> Tuple[str, Optional[str]]:
+    if speaker_normalized == "assistant" and domain == "technical":
+        return "not_applicable", "assistant_technical_content"
+    if domain == "mixed":
+        return "uncertain", "mixed_spiritual_technical_signals"
+    if domain == "spiritual":
+        return "applicable", None
+    if domain == "technical":
         return "not_applicable", "technical_content_detected"
     return "uncertain", "insufficient_phase_signal"
+
+
+def has_nearby_user_support(payload: Dict[str, Any]) -> bool:
+    for key in ["source_context_before", "source_context_after", "nearby_messages", "context_messages", "messages"]:
+        value = payload.get(key)
+        if not value:
+            continue
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    role = str(item.get("speaker") or item.get("role") or "").strip().lower()
+                    if role == "user":
+                        return True
+                elif isinstance(item, str) and item.lower().startswith("user:"):
+                    return True
+        elif isinstance(value, str) and "user:" in value.lower():
+            return True
+    return False
+
+
+def classify_memory_kind_and_scopes(
+    speaker_normalized: str,
+    payload: Dict[str, Any],
+    domain: str,
+) -> Tuple[str, Dict[str, bool], List[str]]:
+    text_blob = " ".join(
+        [
+            str(payload.get("source_title") or "").lower(),
+            str(payload.get("text") or "").lower(),
+            str(payload.get("source_quote") or "").lower(),
+        ]
+    )
+
+    scopes = {
+        "usable_for_user_profile": False,
+        "usable_for_project_history": False,
+        "usable_for_assistant_guidance": False,
+        "usable_for_persona_memory": False,
+        "usable_for_canon": True,
+    }
+    canon_blockers: List[str] = []
+
+    if speaker_normalized == "mixed":
+        scopes["usable_for_canon"] = False
+        canon_blockers.append("source_separation_required")
+
+    if speaker_normalized == "assistant":
+        scopes["usable_for_project_history"] = True
+        scopes["usable_for_assistant_guidance"] = True
+        if any(k in text_blob for k in ["decision", "decided", "milestone", "shipped", "implemented"]):
+            memory_kind = "project_support_history"
+        else:
+            memory_kind = "assistant_guidance"
+
+        if has_nearby_user_support(payload) and any(k in text_blob for k in ["user said", "mark said", "preference"]):
+            memory_kind = "user_asserted_fact"
+            scopes["usable_for_user_profile"] = True
+            scopes["usable_for_persona_memory"] = True
+        return memory_kind, scopes, canon_blockers
+
+    if speaker_normalized == "user":
+        scopes["usable_for_user_profile"] = True
+        scopes["usable_for_project_history"] = True
+        scopes["usable_for_persona_memory"] = True
+        scopes["usable_for_assistant_guidance"] = True
+
+        if any(k in text_blob for k in ["prefer", "preference", "i like", "i want", "i don't want"]):
+            return "preference", scopes, canon_blockers
+        if any(k in text_blob for k in ["persona", "instruction", "voice", "style", "how you should"]):
+            return "persona_instruction", scopes, canon_blockers
+        if any(k in text_blob for k in ["decide", "decision", "we will", "we should"]):
+            return "project_decision", scopes, canon_blockers
+        return "user_asserted_fact", scopes, canon_blockers
+
+    if speaker_normalized in {"system", "tool"}:
+        scopes["usable_for_project_history"] = True
+        scopes["usable_for_assistant_guidance"] = speaker_normalized == "system"
+        scopes["usable_for_persona_memory"] = False
+        scopes["usable_for_user_profile"] = False
+        return "project_support_history", scopes, canon_blockers
+
+    if domain == "technical":
+        scopes["usable_for_project_history"] = True
+        return "project_support_history", scopes, canon_blockers
+
+    return "unknown", scopes, canon_blockers
 
 
 def compute_evidence_and_scope(quote: str, text: str, quote_quality: str) -> Tuple[str, str]:
@@ -271,7 +372,10 @@ def clean_point(
     if conversation_id is None:
         warnings.append("missing_conversation_id")
 
-    project_hint, project_hint_basis, project_confidence = infer_project_hint(payload)
+    if project_original is None:
+        project_hint, project_hint_basis, project_confidence = infer_project_hint(payload)
+    else:
+        project_hint, project_hint_basis, project_confidence = None, "project_present", 1.0
 
     embedded_vector_present, embedded_dims, embedded_names, embedded_removed = detect_embedded_vectors(payload)
     point_vector_info = parse_point_vector_info(point)
@@ -312,9 +416,17 @@ def clean_point(
     if duplicate_of:
         blockers.append("duplicate_record")
 
-    phase_applicability, phase_warning = classify_phase_applicability(payload)
+    domain = classify_domain(payload)
+    if speaker_normalized == "assistant" and domain != "spiritual":
+        domain = "technical"
+
+    phase_applicability, phase_warning = classify_phase_applicability(payload, speaker_normalized, domain)
     if phase_warning:
         warnings.append(phase_warning)
+
+    memory_kind, usable_scopes, canon_blockers = classify_memory_kind_and_scopes(speaker_normalized, payload, domain)
+    if canon_blockers:
+        warnings.extend(canon_blockers)
 
     evidence_strength, reflection_scope = compute_evidence_and_scope(source_quote_cleaned, text, quote_quality)
 
@@ -341,12 +453,14 @@ def clean_point(
         "source_title": source_title,
         "speaker_original": speaker_original,
         "speaker_normalized": speaker_normalized,
+        "source_role": speaker_normalized,
         "timestamp_original": timestamp_original,
         "timestamp_normalized": timestamp_normalized,
         "project_original": project_original,
         "project_hint": project_hint,
         "project_hint_basis": project_hint_basis,
         "project_confidence": project_confidence,
+        "project": project_original,
         "source_quote_original": source_quote_original,
         "source_quote_cleaned": source_quote_cleaned,
         "source_context_before": None,
@@ -366,9 +480,19 @@ def clean_point(
         "duplicate_of": duplicate_of,
         "duplicate_confidence": duplicate_confidence,
         "awakening_phase_original": payload.get("fp_awakening_phase") or payload.get("awakening_phase"),
-        "awakening_phase_cleaned": payload.get("fp_awakening_phase") or payload.get("awakening_phase"),
+        "awakening_phase_cleaned": None
+        if (speaker_normalized == "assistant" and domain == "technical")
+        else (payload.get("fp_awakening_phase") or payload.get("awakening_phase")),
         "phase_applicability": phase_applicability,
         "phase_warning": phase_warning,
+        "domain": domain,
+        "memory_kind": memory_kind,
+        "usable_for_user_profile": usable_scopes["usable_for_user_profile"],
+        "usable_for_project_history": usable_scopes["usable_for_project_history"],
+        "usable_for_assistant_guidance": usable_scopes["usable_for_assistant_guidance"],
+        "usable_for_persona_memory": usable_scopes["usable_for_persona_memory"],
+        "usable_for_canon": usable_scopes["usable_for_canon"],
+        "canon_blockers": sorted(set(canon_blockers)),
         "evidence_strength": evidence_strength,
         "reflection_scope": reflection_scope,
         "safe_for_reflection": safe_for_reflection,

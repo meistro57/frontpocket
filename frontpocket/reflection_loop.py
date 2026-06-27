@@ -39,13 +39,24 @@ class MemoryPoint:
     source_quote: str
     text: str
     speaker: str
+    source_role: str
     timestamp: str
     conversation_id: str
     project: str
+    project_hint: str = ""
+    project_hint_basis: str = "none"
+    project_confidence: float = 0.0
     quote_quality: str = "unknown"
     phase_applicability: str = "uncertain"
     evidence_strength: str = "weak"
     reflection_scope: str = "quote_only"
+    domain: str = "general"
+    memory_kind: str = "unknown"
+    usable_for_user_profile: bool = False
+    usable_for_project_history: bool = False
+    usable_for_assistant_guidance: bool = False
+    usable_for_persona_memory: bool = False
+    usable_for_canon: bool = False
     safe_for_reflection: bool = True
 
 
@@ -137,6 +148,7 @@ def iter_raw_memory_points(skip: set, speaker_filter: Optional[str]) -> Any:
                 source_quote=pl.get("source_quote", ""),
                 text=pl.get("text", "") or pl.get("source_quote", ""),
                 speaker=pl.get("speaker", ""),
+                source_role=pl.get("speaker", "unknown") or "unknown",
                 timestamp=pl.get("timestamp", ""),
                 conversation_id=pl.get("conversation_id", ""),
                 project=pl.get("project", ""),
@@ -184,13 +196,24 @@ def iter_cleaned_memory_points(skip: set, speaker_filter: Optional[str], include
                 source_quote=source_quote,
                 text=text or source_quote,
                 speaker=str(pl.get("speaker_normalized") or cleaned_payload.get("speaker") or "unknown"),
+                source_role=str(pl.get("source_role") or pl.get("speaker_normalized") or cleaned_payload.get("speaker") or "unknown"),
                 timestamp=str(pl.get("timestamp_normalized") or cleaned_payload.get("timestamp") or ""),
                 conversation_id=str(pl.get("conversation_id") or cleaned_payload.get("conversation_id") or ""),
-                project=str(cleaned_payload.get("project") or pl.get("project_hint") or ""),
+                project=str(cleaned_payload.get("project") or ""),
+                project_hint=str(pl.get("project_hint") or ""),
+                project_hint_basis=str(pl.get("project_hint_basis") or "none"),
+                project_confidence=float(pl.get("project_confidence") or 0.0),
                 quote_quality=str(pl.get("quote_quality") or "unknown"),
                 phase_applicability=str(pl.get("phase_applicability") or "uncertain"),
                 evidence_strength=str(pl.get("evidence_strength") or "weak"),
                 reflection_scope=str(pl.get("reflection_scope") or "quote_only"),
+                domain=str(pl.get("domain") or "general"),
+                memory_kind=str(pl.get("memory_kind") or "unknown"),
+                usable_for_user_profile=bool(pl.get("usable_for_user_profile", False)),
+                usable_for_project_history=bool(pl.get("usable_for_project_history", False)),
+                usable_for_assistant_guidance=bool(pl.get("usable_for_assistant_guidance", False)),
+                usable_for_persona_memory=bool(pl.get("usable_for_persona_memory", False)),
+                usable_for_canon=bool(pl.get("usable_for_canon", False)),
                 safe_for_reflection=bool(pl.get("safe_for_reflection", False)),
             )
 
@@ -218,12 +241,15 @@ Do not force spiritual framing when evidence is weak or technical-only."""
 REFLECTION_PROMPT = """Reflect on this conversation fragment.
 
 Speaker: {speaker}
+Source role: {source_role}
 Conversation: {source_title}
 Date: {timestamp}
 Quote quality: {quote_quality}
 Evidence strength: {evidence_strength}
 Reflection scope: {reflection_scope}
 Phase applicability: {phase_applicability}
+Domain: {domain}
+Memory kind target: {memory_kind}
 
 Text:
 ---
@@ -234,6 +260,7 @@ Rules:
 - If evidence_strength is weak, keep insight narrow and cautious.
 - If reflection_scope is quote_only, avoid broad personality/project claims.
 - If phase_applicability is not_applicable, avoid spiritual framing unless directly present in text.
+- Assistant/source_role=assistant content must not be reframed as direct user facts.
 
 Return ONLY valid JSON with:
 {{
@@ -249,13 +276,24 @@ Return ONLY valid JSON with:
 }}"""
 
 
+def apply_confidence_cap(quote_quality: str, reflection_confidence: float) -> float:
+    if quote_quality in {"partial", "truncated"}:
+        return min(reflection_confidence, 0.75)
+    if quote_quality == "malformed":
+        return min(reflection_confidence, 0.35)
+    return reflection_confidence
+
+
 def reflect_on_point(point: MemoryPoint, model: str) -> Reflection:
     text = (point.text or point.source_quote or "").strip()
+    if point.quote_quality == "missing":
+        return Reflection(depth="shallow", reflection_confidence=0.0)
     if not text or len(text) < 20:
         return Reflection(depth="shallow", reflection_confidence=0.0)
 
     prompt = REFLECTION_PROMPT.format(
         speaker=point.speaker,
+        source_role=point.source_role,
         source_title=point.source_title,
         timestamp=point.timestamp[:10] if point.timestamp else "unknown",
         text=text[:2000],
@@ -263,6 +301,8 @@ def reflect_on_point(point: MemoryPoint, model: str) -> Reflection:
         evidence_strength=point.evidence_strength,
         reflection_scope=point.reflection_scope,
         phase_applicability=point.phase_applicability,
+        domain=point.domain,
+        memory_kind=point.memory_kind,
     )
 
     resp = requests.post(
@@ -296,6 +336,9 @@ def reflect_on_point(point: MemoryPoint, model: str) -> Reflection:
     if point.phase_applicability == "not_applicable":
         awakening_phase = "unknown"
 
+    reflection_confidence = float(data.get("reflection_confidence") or 0.0)
+    reflection_confidence = apply_confidence_cap(point.quote_quality, reflection_confidence)
+
     return Reflection(
         themes=data.get("themes") or [],
         depth=data.get("depth") or "shallow",
@@ -305,7 +348,7 @@ def reflect_on_point(point: MemoryPoint, model: str) -> Reflection:
         questions=data.get("questions") or [],
         echoes=data.get("echoes") or [],
         contradiction_signal=bool(data.get("contradiction_signal", False)),
-        reflection_confidence=float(data.get("reflection_confidence") or 0.0),
+        reflection_confidence=reflection_confidence,
         raw=data,
     )
 
@@ -348,13 +391,27 @@ def upsert_reflection(point: MemoryPoint, reflection: Reflection, model: str) ->
         "source_title": point.source_title,
         "source_quote": (point.source_quote or "")[:500],
         "speaker": point.speaker,
+        "source_role": point.source_role,
         "timestamp": point.timestamp,
         "conversation_id": point.conversation_id,
         "project": point.project,
+        "project_hint": point.project_hint,
+        "project_hint_basis": point.project_hint_basis,
+        "project_confidence": point.project_confidence,
         "quote_quality": point.quote_quality,
         "phase_applicability": point.phase_applicability,
         "evidence_strength": point.evidence_strength,
         "reflection_scope": point.reflection_scope,
+        "domain": point.domain,
+        "memory_kind": point.memory_kind,
+        "usable_for_user_profile": point.usable_for_user_profile,
+        "usable_for_project_history": point.usable_for_project_history,
+        "usable_for_assistant_guidance": point.usable_for_assistant_guidance,
+        "usable_for_persona_memory": point.usable_for_persona_memory,
+        "usable_for_canon": point.usable_for_canon,
+        "vector_present": True,
+        "vector_names": ["insight"],
+        "vector_dimensions": len(vector),
         "themes": reflection.themes,
         "depth": reflection.depth,
         "awakening_phase": reflection.awakening_phase,

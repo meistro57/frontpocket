@@ -114,7 +114,6 @@ def print_result(p: Dict, score: Optional[float] = None) -> None:
     themes = pl.get("themes") or []
     if themes:
         print(f"  themes:   {', '.join(themes)}")
-    phase = pl.get("awakening_phase","")
     et = pl.get("emotional_tone","")
     if et:
         print(f"  tone:     {et}")
@@ -123,8 +122,17 @@ def print_result(p: Dict, score: Optional[float] = None) -> None:
         print(f"  raises:   {questions[0]}")
     if pl.get("contradiction_signal"):
         print(f"  ⚡ CONTRADICTION SIGNAL")
+
+    payload_vector_present = bool(pl.get("vector_present", False))
+    payload_vector_names = pl.get("vector_names") or []
+    payload_vector_dimensions = int(pl.get("vector_dimensions") or 0)
+
+    print(
+        f"  vector_meta: present={payload_vector_present} names={payload_vector_names} dims={payload_vector_dimensions}"
+    )
+
     if vector is None:
-        print("  vector:   hidden (use --include-vectors to fetch)")
+        print("  vectors:  hidden (use --include-vectors=true to fetch full vectors)")
     elif isinstance(vector, dict):
         names = sorted(vector.keys())
         dims = []
@@ -132,9 +140,9 @@ def print_result(p: Dict, score: Optional[float] = None) -> None:
             value = vector.get(name)
             if isinstance(value, list):
                 dims.append(f"{name}:{len(value)}")
-        print(f"  vector:   present names={names} dims={', '.join(dims) if dims else 'unknown'}")
+        print(f"  vectors:  included names={names} dims={', '.join(dims) if dims else 'unknown'}")
     elif isinstance(vector, list):
-        print(f"  vector:   present default:{len(vector)}")
+        print(f"  vectors:  included default:{len(vector)}")
 
 
 def show_stats() -> None:
@@ -171,7 +179,7 @@ def main() -> int:
     parser.add_argument("--limit",  type=int, default=10)
     parser.add_argument("--phase",  default=None, choices=["dormancy","crack","flood","embodiment","teacher","integration","settled","unknown"])
     parser.add_argument("--depth",  default=None, choices=["shallow","moderate","deep","profound"])
-    parser.add_argument("--speaker",default=None, choices=["user","assistant"])
+    parser.add_argument("--speaker",default=None, choices=["user","assistant","system","tool","mixed","unknown"])
     parser.add_argument("--contradiction", action="store_true", help="Show only contradiction-flagged reflections")
     parser.add_argument("--stats",  action="store_true", help="Show collection stats and exit")
     parser.add_argument("--include-vectors", action="store_true", help="Include vectors in query response")

@@ -31,6 +31,7 @@ class ReflectionLoopTests(unittest.TestCase):
             source_quote="valid quote but blocked",
             text="valid quote but blocked",
             speaker="user",
+            source_role="user",
             timestamp="2026-06-26T00:00:00Z",
             conversation_id="c",
             project="p",
@@ -62,6 +63,7 @@ class ReflectionLoopTests(unittest.TestCase):
             source_quote="This is a sufficiently long safe quote for reflection.",
             text="This is a sufficiently long safe quote for reflection.",
             speaker="user",
+            source_role="user",
             timestamp="2026-06-26T00:00:00Z",
             conversation_id="c",
             project="p",
@@ -87,6 +89,12 @@ class ReflectionLoopTests(unittest.TestCase):
             self.assertEqual(state["processed"], 1)
             self.assertTrue(cleaned_iter.called)
             self.assertFalse(raw_iter.called)
+
+    def test_confidence_caps_applied_by_quote_quality(self):
+        self.assertEqual(reflection_loop.apply_confidence_cap("complete", 0.91), 0.91)
+        self.assertEqual(reflection_loop.apply_confidence_cap("partial", 0.91), 0.75)
+        self.assertEqual(reflection_loop.apply_confidence_cap("truncated", 0.88), 0.75)
+        self.assertEqual(reflection_loop.apply_confidence_cap("malformed", 0.90), 0.35)
 
 
 if __name__ == "__main__":

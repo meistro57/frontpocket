@@ -155,7 +155,28 @@ curl -X POST http://localhost:8088/memory/canon/proposed/cand_xxx/approve \
   -d '{"reviewed_by":"mark"}'
 ```
 
-## 17) Run tests
+## 17) Run speaker-aware cleanup + reflection
+
+```bash
+# cleanup/normalize raw memory into fp_cleaned_memory
+python -m frontpocket.memory_cleanup --batch-size 200 --write-cleaned
+
+# reflect from cleaned memory (default source)
+python fp_reflect_loop.py --limit 50
+
+# query reflection layer (vectors hidden by default; metadata still shown)
+python fp_reflect_query.py "lm studio troubleshooting" --speaker assistant --limit 5
+
+# include full vectors only when needed
+python fp_reflect_query.py "lm studio troubleshooting" --speaker assistant --limit 5 --include-vectors
+```
+
+Speaker-aware behavior in this pipeline:
+- Source roles normalize to `user | assistant | system | tool | mixed | unknown`.
+- Assistant technical chunks are classified `domain=technical` with `phase_applicability=not_applicable`.
+- Project hints can be inferred from `source_title` when project is empty; final project assignment remains manual/approved.
+
+## 18) Run tests
 
 ```bash
 go test ./...

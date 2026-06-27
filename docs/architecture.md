@@ -37,8 +37,13 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - MindDrill chat calls `POST /memory/chat`, which retrieves both memory layers and writes back through the Go API only.
 - The memory loop proposes canon candidates but never auto-promotes them; human review is required via CLI or API approve/reject/merge actions.
 - The pre-reflection cleanup loop is mechanical (normalization/validation only), writes to `fp_cleaned_memory`, and does not mutate raw `frontpocket_memory` points.
+- Cleanup normalizes speaker/source role to `user | assistant | system | tool | mixed | unknown` and stamps role-aware `memory_kind` plus usability scopes.
 - Reflection reads `fp_cleaned_memory` by default (`--raw-input` restores legacy raw-source mode).
+- Assistant technical chunks are classified as `domain=technical` with `phase_applicability=not_applicable` and no awakening-phase assignment.
+- Reflection confidence is capped by quote quality (`partial|truncated <= 0.75`, `malformed <= 0.35`, missing quote blocked by default).
+- Project hints are inferred from `source_title` when project is empty, while final project assignment remains manual/approved.
 - Reflection queries and cleanup review paths keep vectors hidden by default unless explicitly requested.
+- Query/review surfaces expose vector metadata (`vector_present`, `vector_names`, `vector_dimensions`) even when vectors are hidden.
 - `FRONTPOCKET_PROPOSED_CANON_PATH` controls where proposed canon queue state is persisted (default `data/proposed_canon.json`).
 
 ## Endpoint groups

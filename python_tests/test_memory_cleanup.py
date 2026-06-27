@@ -34,6 +34,9 @@ class MemoryCleanupTests(unittest.TestCase):
         )
         self.assertEqual(result.payload["cleanup_status"], "clean")
         self.assertTrue(result.payload["safe_for_reflection"])
+        self.assertEqual(result.payload["source_role"], "user")
+        self.assertTrue(result.payload["usable_for_user_profile"])
+        self.assertEqual(result.payload["memory_kind"], "user_asserted_fact")
 
     def test_empty_project_normalized_and_hint(self):
         point = self._point(
@@ -159,7 +162,48 @@ class MemoryCleanupTests(unittest.TestCase):
         tech_result = memory_cleanup.clean_point(tech, seen_ids=set(), seen_hashes={}, include_vectors=False, repair_quotes=False)
         spiritual_result = memory_cleanup.clean_point(spiritual, seen_ids=set(), seen_hashes={}, include_vectors=False, repair_quotes=False)
         self.assertEqual(tech_result.payload["phase_applicability"], "not_applicable")
+        self.assertEqual(tech_result.payload["domain"], "technical")
         self.assertIn(spiritual_result.payload["phase_applicability"], {"applicable", "uncertain"})
+
+    def test_assistant_record_scopes_and_memory_kind(self):
+        point = self._point(
+            payload={
+                "memory_id": "mem-9",
+                "source_title": "Best LLMs for LM Studio",
+                "source_quote": "Try updating NVIDIA drivers and verify CUDA setup in LM Studio.",
+                "text": "Try updating NVIDIA drivers and verify CUDA setup in LM Studio.",
+                "speaker": "assistant",
+                "timestamp": "2026-06-26T12:00:00Z",
+                "conversation_id": "conv-1",
+                "project": "",
+            }
+        )
+        result = memory_cleanup.clean_point(point, seen_ids=set(), seen_hashes={}, include_vectors=False, repair_quotes=False)
+        self.assertEqual(result.payload["speaker_normalized"], "assistant")
+        self.assertEqual(result.payload["domain"], "technical")
+        self.assertEqual(result.payload["phase_applicability"], "not_applicable")
+        self.assertFalse(result.payload["usable_for_user_profile"])
+        self.assertTrue(result.payload["usable_for_project_history"])
+        self.assertTrue(result.payload["usable_for_assistant_guidance"])
+        self.assertEqual(result.payload["memory_kind"], "assistant_guidance")
+        self.assertEqual(result.payload["project_hint"], "LM Studio / Local LLM Setup")
+
+    def test_mixed_speaker_blocks_canon(self):
+        point = self._point(
+            payload={
+                "memory_id": "mem-10",
+                "source_title": "Conversation blend",
+                "source_quote": "User and assistant statements appear together in one chunk.",
+                "text": "User and assistant statements appear together in one chunk.",
+                "speaker": "mixed",
+                "timestamp": "2026-06-26T12:00:00Z",
+                "conversation_id": "conv-1",
+                "project": "X",
+            }
+        )
+        result = memory_cleanup.clean_point(point, seen_ids=set(), seen_hashes={}, include_vectors=False, repair_quotes=False)
+        self.assertFalse(result.payload["usable_for_canon"])
+        self.assertIn("source_separation_required", result.payload["canon_blockers"])
 
     def test_duplicate_record_detected(self):
         seen_ids = set()

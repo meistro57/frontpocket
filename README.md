@@ -290,6 +290,9 @@ cleaned records into `fp_cleaned_memory`. `fp_reflect_loop.py` reads from cleane
 default, skips unsafe records unless explicitly included, and upserts findings into
 `fp_reflections`.
 
+Cleanup is speaker-aware and assigns normalized source role values:
+`user | assistant | system | tool | mixed | unknown`.
+
 Each reflection point contains:
 - `themes` — 1–4 word topic tags
 - `depth` — `shallow | moderate | deep | profound`
@@ -299,10 +302,20 @@ Each reflection point contains:
 - `questions` — what the fragment implies or raises
 - `echoes` — cross-conversation pattern signals
 - `contradiction_signal` — boolean flag for internal conflict
-- `reflection_confidence` — 0.0–1.0
+- `reflection_confidence` — 0.0–1.0 (capped by quote quality)
+- `source_role`, `memory_kind`, and usability scopes for profile/history/guidance/persona/canon filtering
 
 When running with `--raw-input`, the loop also writes `fp_reflected_at`, `fp_reflection_depth`,
 `fp_themes`, and `fp_awakening_phase` flags back to source `frontpocket_memory` points.
+
+Speaker-aware reflection policy highlights:
+- `speaker=user` may produce `user_asserted_fact`, `preference`, `project_decision`, or `persona_instruction`.
+- `speaker=assistant` may produce `assistant_guidance` or `project_support_history`.
+- Assistant content does not become `user_asserted_fact` unless nearby user support exists.
+- `speaker=mixed` is marked `usable_for_canon=false` until source separation.
+- Technical assistant chunks are forced to `domain=technical`, `phase_applicability=not_applicable`, and no awakening-phase assignment.
+- Confidence caps: `partial|truncated <= 0.75`, `malformed <= 0.35`, `missing quote` blocked by default.
+- Project hints are inferred from `source_title` only when `project` is empty; the final `project` value is not auto-assigned.
 
 ### Setup
 
@@ -373,6 +386,9 @@ python fp_reflect_query.py --stats
 
 # include vectors in result output (default hides vectors)
 python fp_reflect_query.py "awakening anxiety" --include-vectors --limit 3
+
+# by default shows vector metadata only: vector_present, vector_names, vector_dimensions
+python fp_reflect_query.py "awakening anxiety" --limit 3
 ```
 
 ---
