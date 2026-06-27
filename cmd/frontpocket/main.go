@@ -32,6 +32,8 @@ func run(args []string) error {
 			return runIngestCommand(args[1:])
 		case "minddrill":
 			return runMindDrill(args[1:])
+		case "memory-loop":
+			return runMemoryLoopCommand(args[1:])
 		}
 	}
 
@@ -63,6 +65,7 @@ func printRootHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Commands:")
 	fmt.Fprintln(flags.Output(), "  ingest       Import memory data from supported sources.")
 	fmt.Fprintln(flags.Output(), "  minddrill    Serve the MindDrill memory explorer in your browser.")
+	fmt.Fprintln(flags.Output(), "  memory-loop  Run source-backed memory curation and review workflows.")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Subcommands:")
 	fmt.Fprintln(flags.Output(), "  ingest chatgpt      Import from a ChatGPT export zip or folder.")
@@ -71,6 +74,7 @@ func printRootHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "  frontpocket --help")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
 	fmt.Fprintln(flags.Output(), "  frontpocket minddrill --help")
+	fmt.Fprintln(flags.Output(), "  frontpocket memory-loop --help")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Options:")
 	flags.PrintDefaults()

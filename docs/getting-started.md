@@ -28,6 +28,10 @@ MINDDRILL_MEMORY_ENABLED=true
 MINDDRILL_MEMORY_WRITE_MODE=summary
 MINDDRILL_MEMORY_TOP_K=6
 MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY=8
+
+# Proposed canon review queue file path (used by API + CLI memory loop)
+FRONTPOCKET_PROPOSED_CANON_PATH=data/proposed_canon.json
+
 # Optional local helper endpoints for MindDrill session reset/search UI actions:
 # DEV_DEBUG_ENDPOINTS=true
 ```
@@ -121,7 +125,37 @@ from its own origin and uses it to apply the `--api` target for all browser API 
 Ensure the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md`
 for options.
 
-## 13) Run tests
+## 13) Run memory loop (dry-run)
+
+```bash
+frontpocket memory-loop --batch-size 200 --dry-run
+```
+
+## 14) Write proposed canon candidates
+
+```bash
+frontpocket memory-loop --batch-size 200 --write-candidates
+```
+
+## 15) Review queue from CLI
+
+```bash
+frontpocket memory-loop list
+frontpocket memory-loop approve --id cand_xxx --reviewed-by mark
+frontpocket memory-loop reject --id cand_xxx --reason "insufficient evidence" --reviewed-by mark
+frontpocket memory-loop merge --id cand_xxx --target canon_abc --reviewed-by mark
+```
+
+## 16) Review queue from API
+
+```bash
+curl http://localhost:8088/memory/canon/proposed
+curl -X POST http://localhost:8088/memory/canon/proposed/cand_xxx/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"reviewed_by":"mark"}'
+```
+
+## 17) Run tests
 
 ```bash
 go test ./...

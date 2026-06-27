@@ -218,6 +218,64 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+			"/memory/canon/proposed": map[string]any{
+				"get": map[string]any{
+					"operationId": "listProposedCanon",
+					"summary":     "List proposed canon candidates",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Proposed canon candidates.",
+							"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object"}}},
+						},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
+					},
+				},
+			},
+			"/memory/canon/proposed/{id}": map[string]any{
+				"get": map[string]any{
+					"operationId": "getProposedCanon",
+					"summary":     "Get proposed canon candidate",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Candidate payload."},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"404": map[string]any{"$ref": "#/components/responses/ValidationError"},
+					},
+				},
+			},
+			"/memory/canon/proposed/{id}/approve": map[string]any{
+				"post": map[string]any{
+					"operationId": "approveProposedCanon",
+					"summary":     "Approve proposed canon candidate",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Approved candidate."},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
+					},
+				},
+			},
+			"/memory/canon/proposed/{id}/reject": map[string]any{
+				"post": map[string]any{
+					"operationId": "rejectProposedCanon",
+					"summary":     "Reject proposed canon candidate",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Rejected candidate."},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
+					},
+				},
+			},
+			"/memory/canon/proposed/{id}/merge": map[string]any{
+				"post": map[string]any{
+					"operationId": "mergeProposedCanon",
+					"summary":     "Merge proposed canon candidate",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Merged candidate."},
+						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
+					},
+				},
+			},
 			"/memory/ingest/chat": map[string]any{
 				"post": map[string]any{
 					"operationId": "ingestChatMemory",
@@ -450,6 +508,9 @@ func (s *Server) openAPISpec() map[string]any {
 						"query":   map[string]any{"type": "string", "minLength": 1},
 						"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.ContextPack.MaxLimit},
 						"filters": map[string]any{"$ref": "#/components/schemas/SearchFilters"},
+						"include_proposed": map[string]any{"type": "boolean"},
+						"include_rejected": map[string]any{"type": "boolean"},
+						"canonical_first":  map[string]any{"type": "boolean"},
 					},
 				},
 				"ContextPackResponse": map[string]any{

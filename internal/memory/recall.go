@@ -3,8 +3,10 @@ package memory
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type MemoryStore interface {
@@ -66,11 +68,15 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 		if !matchesFilters(p, req.Filters) {
 			continue
 		}
+		if shouldExcludeByStatus(req.IncludeRejected, p.Status) {
+			continue
+		}
 
 		score := scoreText(query, p.Text)
 		if score <= 0 {
 			continue
 		}
+		score = applyCanonicalBoost(score, p.Canonical, p.Status)
 
 		results = append(results, SearchResult{
 			MemoryID:            p.MemoryID,
@@ -91,6 +97,18 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 			EmbeddingProvider:   p.EmbeddingProvider,
 			EmbeddingModel:      p.EmbeddingModel,
 			EmbeddingDimensions: p.EmbeddingDimensions,
+			Canonical:           p.Canonical,
+			Confidence:          p.Confidence,
+			Status:              p.Status,
+			SourceMemoryIDs:     append([]string(nil), p.SourceMemoryIDs...),
+			SourceQuotes:        append([]string(nil), p.SourceQuotes...),
+			ReviewedAt:          p.ReviewedAt,
+			ReviewedBy:          p.ReviewedBy,
+			CreatedByLoop:       p.CreatedByLoop,
+			Supersedes:          append([]string(nil), p.Supersedes...),
+			MergedFrom:          append([]string(nil), p.MergedFrom...),
+			ApproximateDate:     p.ApproximateDate,
+			DateBasis:           p.DateBasis,
 		})
 	}
 
@@ -156,6 +174,51 @@ func (s *InMemoryStore) DeleteByFilters(filters SearchFilters) error {
 	}
 	s.points = filtered
 	return nil
+}
+
+func (s *InMemoryStore) ScrollRaw(_ context.Context, limit int, offset string, filters SearchFilters, since, until time.Time, includeCanonical bool) ([]MemoryPoint, string, error) {
+	s.mu.RLock()
+	points := append([]MemoryPoint(nil), s.points...)
+	s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 128
+	}
+	start := 0
+	if trimmed := strings.TrimSpace(offset); trimmed != "" {
+		if parsed, err := strconv.Atoi(trimmed); err == nil && parsed >= 0 {
+			start = parsed
+		}
+	}
+
+	filtered := make([]MemoryPoint, 0, len(points))
+	for _, point := range points {
+		if !matchesFilters(point, filters) {
+			continue
+		}
+		if !includeCanonical && point.Canonical {
+			continue
+		}
+		if !since.IsZero() && point.Timestamp.Before(since) {
+			continue
+		}
+		if !until.IsZero() && point.Timestamp.After(until) {
+			continue
+		}
+		filtered = append(filtered, point)
+	}
+	if start >= len(filtered) {
+		return []MemoryPoint{}, "", nil
+	}
+	end := start + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	next := ""
+	if end < len(filtered) {
+		next = strconv.Itoa(end)
+	}
+	return filtered[start:end], next, nil
 }
 
 func scoreText(query, text string) float64 {
@@ -241,4 +304,36 @@ func tokens(s string) []string {
 		}
 	}
 	return out
+}
+
+func applyCanonicalBoost(score float64, canonical bool, status string) float64 {
+	boost := 1.0
+	if canonical {
+		boost *= 1.25
+	}
+	switch strings.TrimSpace(status) {
+	case StatusApprovedByUser, StatusDirectUserStatement:
+		boost *= 1.2
+	case StatusInferredFromSources:
+		boost *= 1.08
+	case StatusNeedsReview:
+		boost *= 0.98
+	}
+	return score * boost
+}
+
+func shouldExcludeByStatus(includeRejected bool, status string) bool {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return false
+	}
+	if includeRejected {
+		return false
+	}
+	switch status {
+	case StatusRejected, StatusContradicted, StatusOutdated:
+		return true
+	default:
+		return false
+	}
 }

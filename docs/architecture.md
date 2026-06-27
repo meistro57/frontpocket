@@ -10,6 +10,10 @@ Embedder (Ollama/OpenAI/OpenRouter)
 Qdrant (long-term semantic memory)
         ↘
          Redis (working/session cache)
+
+Proposed canon queue (JSON review file)
+        ↑
+frontpocket memory-loop + /memory/canon/proposed/*
 ```
 
 ## Notes
@@ -25,6 +29,8 @@ Qdrant (long-term semantic memory)
 - MindDrill is a separate, static browser UI (`cmd/minddrill`) that is purely an API client — it stores nothing itself and never bypasses the API boundary.
 - MindDrill serves `GET /config.json` from its own origin to publish the configured FrontPocket API base URL (`--api`) at runtime, so the UI has no hardcoded backend URL.
 - MindDrill chat calls `POST /memory/chat`, which retrieves both memory layers and writes back through the Go API only.
+- The memory loop proposes canon candidates but never auto-promotes them; human review is required via CLI or API approve/reject/merge actions.
+- `FRONTPOCKET_PROPOSED_CANON_PATH` controls where proposed canon queue state is persisted (default `data/proposed_canon.json`).
 
 ## Endpoint groups
 
@@ -42,6 +48,14 @@ Operational endpoints (trusted/private use):
 - `DELETE /memory/session`
 - `POST /memory/ingest/chat`
 - `POST /memory/chat`
+
+Canon review endpoints (trusted/private use):
+
+- `GET /memory/canon/proposed`
+- `GET /memory/canon/proposed/{id}`
+- `POST /memory/canon/proposed/{id}/approve`
+- `POST /memory/canon/proposed/{id}/reject`
+- `POST /memory/canon/proposed/{id}/merge`
 
 Optional local development helpers (enable `DEV_DEBUG_ENDPOINTS=true`):
 

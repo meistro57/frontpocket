@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -311,7 +312,12 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 
 	results := make([]memory.SearchResult, 0, len(response.Result))
 	for _, point := range response.Result {
-		results = append(results, fromQdrantPayload(point.Payload, point.Score))
+		item := fromQdrantPayload(point.Payload, point.Score)
+		if shouldExcludeByStatus(req.IncludeRejected, item.Status) {
+			continue
+		}
+		item.Score = applyCanonicalBoost(item.Score, item.Canonical, item.Status)
+		results = append(results, item)
 	}
 	if len(results) == 0 && s.fallback != nil {
 		return s.fallback.Search(ctx, req)
@@ -590,7 +596,7 @@ func toQdrantFilter(filters memory.SearchFilters) map[string]any {
 }
 
 func toQdrantPayload(point memory.MemoryPoint) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"memory_id":            point.MemoryID,
 		"conversation_id":      point.ConversationID,
 		"session_id":           point.SessionID,
@@ -609,7 +615,24 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 		"embedding_provider":   point.EmbeddingProvider,
 		"embedding_model":      point.EmbeddingModel,
 		"embedding_dimensions": point.EmbeddingDimensions,
+		"canonical":            point.Canonical,
+		"confidence":           point.Confidence,
+		"status":               point.Status,
+		"source_memory_ids":    point.SourceMemoryIDs,
+		"source_quotes":        point.SourceQuotes,
+		"reviewed_by":          point.ReviewedBy,
+		"created_by_loop":      point.CreatedByLoop,
+		"supersedes":           point.Supersedes,
+		"merged_from":          point.MergedFrom,
+		"approximate_date":     point.ApproximateDate,
+		"date_basis":           point.DateBasis,
+		"rejection_reason":     point.RejectionReason,
+		"merge_target_id":      point.MergeTargetID,
 	}
+	if point.ReviewedAt != nil && !point.ReviewedAt.IsZero() {
+		payload["reviewed_at"] = point.ReviewedAt.Format(time.RFC3339)
+	}
+	return payload
 }
 
 func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResult {
@@ -632,6 +655,18 @@ func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResul
 		EmbeddingProvider:   asString(payload["embedding_provider"]),
 		EmbeddingModel:      asString(payload["embedding_model"]),
 		EmbeddingDimensions: asInt(payload["embedding_dimensions"]),
+		Canonical:           asBool(payload["canonical"]),
+		Confidence:          asString(payload["confidence"]),
+		Status:              asString(payload["status"]),
+		SourceMemoryIDs:     asStringSlice(payload["source_memory_ids"]),
+		SourceQuotes:        asStringSlice(payload["source_quotes"]),
+		ReviewedAt:          asTimePtr(payload["reviewed_at"]),
+		ReviewedBy:          asString(payload["reviewed_by"]),
+		CreatedByLoop:       asBool(payload["created_by_loop"]),
+		Supersedes:          asStringSlice(payload["supersedes"]),
+		MergedFrom:          asStringSlice(payload["merged_from"]),
+		ApproximateDate:     asString(payload["approximate_date"]),
+		DateBasis:           asString(payload["date_basis"]),
 	}
 }
 
@@ -667,6 +702,8 @@ func asInt(value any) int {
 	switch v := value.(type) {
 	case int:
 		return v
+	case int64:
+		return int(v)
 	case float64:
 		return int(v)
 	case json.Number:
@@ -674,6 +711,18 @@ func asInt(value any) int {
 		return int(i)
 	default:
 		return 0
+	}
+}
+
+func asBool(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(v))
+		return parsed
+	default:
+		return false
 	}
 }
 
@@ -687,4 +736,41 @@ func asTime(value any) time.Time {
 		return time.Time{}
 	}
 	return ts
+}
+
+func asTimePtr(value any) *time.Time {
+	ts := asTime(value)
+	if ts.IsZero() {
+		return nil
+	}
+	return &ts
+}
+
+func applyCanonicalBoost(score float64, canonical bool, status string) float64 {
+	boost := 1.0
+	if canonical {
+		boost *= 1.25
+	}
+	switch strings.TrimSpace(status) {
+	case memory.StatusApprovedByUser, memory.StatusDirectUserStatement:
+		boost *= 1.2
+	case memory.StatusInferredFromSources:
+		boost *= 1.08
+	case memory.StatusNeedsReview:
+		boost *= 0.98
+	}
+	return score * boost
+}
+
+func shouldExcludeByStatus(includeRejected bool, status string) bool {
+	status = strings.TrimSpace(status)
+	if status == "" || includeRejected {
+		return false
+	}
+	switch status {
+	case memory.StatusRejected, memory.StatusContradicted, memory.StatusOutdated:
+		return true
+	default:
+		return false
+	}
 }

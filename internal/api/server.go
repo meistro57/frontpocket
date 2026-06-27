@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/meistro57/frontpocket/internal/config"
 	"github.com/meistro57/frontpocket/internal/embed"
 	"github.com/meistro57/frontpocket/internal/memory"
+	"github.com/meistro57/frontpocket/internal/memoryloop"
 	"github.com/meistro57/frontpocket/internal/store"
 )
 
@@ -35,6 +37,7 @@ type Server struct {
 	sessionFallbackMu sync.RWMutex
 	sessionFallback   map[string]memory.SessionState
 	defaultSessionTTL time.Duration
+	reviewQueue       *memoryloop.FileReviewQueue
 }
 
 func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -95,6 +98,11 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		},
 	}
 
+	queuePath := strings.TrimSpace(os.Getenv("FRONTPOCKET_PROPOSED_CANON_PATH"))
+	if queuePath == "" {
+		queuePath = "data/proposed_canon.json"
+	}
+
 	s := &Server{
 		cfg:               cfg,
 		logger:            logger,
@@ -113,6 +121,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		searchCacheKey:    strings.TrimSpace(cfg.Redis.KeyPrefix),
 		sessionFallback:   make(map[string]memory.SessionState),
 		defaultSessionTTL: time.Hour,
+		reviewQueue:       memoryloop.NewFileReviewQueue(queuePath),
 	}
 
 	s.registerRoutes()
@@ -170,6 +179,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /memory/session", s.handleMemorySessionDelete)
 	s.mux.HandleFunc("POST /memory/chat", s.handleMemoryChat)
 	s.mux.HandleFunc("DELETE /memory/chat/session", s.handleMemoryChatSessionDelete)
+	s.mux.HandleFunc("GET /memory/canon/proposed", s.handleProposedCanonList)
+	s.mux.HandleFunc("GET /memory/canon/proposed/{id}", s.handleProposedCanonGet)
+	s.mux.HandleFunc("POST /memory/canon/proposed/{id}/approve", s.handleProposedCanonApprove)
+	s.mux.HandleFunc("POST /memory/canon/proposed/{id}/reject", s.handleProposedCanonReject)
+	s.mux.HandleFunc("POST /memory/canon/proposed/{id}/merge", s.handleProposedCanonMerge)
 	if s.cfg.Dev.DebugEndpoints {
 		s.mux.HandleFunc("GET /minddrill/memory/stats", s.handleMindDrillMemoryStats)
 		s.mux.HandleFunc("POST /minddrill/memory/search", s.handleMindDrillMemorySearch)

@@ -19,6 +19,30 @@ const (
 	KindUserPreference    = "user_preference"
 	KindProjectDecision   = "project_decision"
 	KindToolResult        = "tool_result"
+	KindUserAssertedFact  = "user_asserted_fact"
+	KindCanonicalTimeline = "canonical_timeline"
+	KindInferredPattern   = "inferred_pattern"
+	KindPersonaInstruction = "persona_instruction"
+	KindUnresolvedQuestion = "unresolved_question"
+	KindContradictionNote  = "contradiction_note"
+	KindDeprecatedMemory   = "deprecated_memory"
+)
+
+const (
+	ConfidenceLow    = "low"
+	ConfidenceMedium = "medium"
+	ConfidenceHigh   = "high"
+)
+
+const (
+	StatusDirectUserStatement = "direct_user_statement"
+	StatusApprovedByUser      = "approved_by_user"
+	StatusInferredFromSources = "inferred_from_sources"
+	StatusSpeculative         = "speculative"
+	StatusContradicted        = "contradicted"
+	StatusOutdated            = "outdated"
+	StatusNeedsReview         = "needs_review"
+	StatusRejected            = "rejected"
 )
 
 type MessageRecord struct {
@@ -52,6 +76,20 @@ type MemoryPoint struct {
 	EmbeddingProvider   string    `json:"embedding_provider"`
 	EmbeddingModel      string    `json:"embedding_model"`
 	EmbeddingDimensions int       `json:"embedding_dimensions"`
+	Canonical           bool      `json:"canonical,omitempty"`
+	Confidence          string    `json:"confidence,omitempty"`
+	Status              string    `json:"status,omitempty"`
+	SourceMemoryIDs     []string  `json:"source_memory_ids,omitempty"`
+	SourceQuotes        []string  `json:"source_quotes,omitempty"`
+	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy          string    `json:"reviewed_by,omitempty"`
+	CreatedByLoop       bool      `json:"created_by_loop,omitempty"`
+	Supersedes          []string  `json:"supersedes,omitempty"`
+	MergedFrom          []string  `json:"merged_from,omitempty"`
+	ApproximateDate     string    `json:"approximate_date,omitempty"`
+	DateBasis           string    `json:"date_basis,omitempty"`
+	RejectionReason     string    `json:"rejection_reason,omitempty"`
+	MergeTargetID       string    `json:"merge_target_id,omitempty"`
 	Vector              []float32 `json:"-"`
 }
 
@@ -65,9 +103,12 @@ type SearchFilters struct {
 }
 
 type SearchRequest struct {
-	Query   string        `json:"query"`
-	Limit   int           `json:"limit,omitempty"`
-	Filters SearchFilters `json:"filters,omitempty"`
+	Query            string        `json:"query"`
+	Limit            int           `json:"limit,omitempty"`
+	Filters          SearchFilters `json:"filters,omitempty"`
+	IncludeProposed  bool          `json:"include_proposed,omitempty"`
+	IncludeRejected  bool          `json:"include_rejected,omitempty"`
+	CanonicalFirst   bool          `json:"canonical_first,omitempty"`
 }
 
 type SearchResult struct {
@@ -89,6 +130,18 @@ type SearchResult struct {
 	EmbeddingProvider   string    `json:"embedding_provider"`
 	EmbeddingModel      string    `json:"embedding_model"`
 	EmbeddingDimensions int       `json:"embedding_dimensions"`
+	Canonical           bool      `json:"canonical,omitempty"`
+	Confidence          string    `json:"confidence,omitempty"`
+	Status              string    `json:"status,omitempty"`
+	SourceMemoryIDs     []string  `json:"source_memory_ids,omitempty"`
+	SourceQuotes        []string  `json:"source_quotes,omitempty"`
+	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy          string    `json:"reviewed_by,omitempty"`
+	CreatedByLoop       bool      `json:"created_by_loop,omitempty"`
+	Supersedes          []string  `json:"supersedes,omitempty"`
+	MergedFrom          []string  `json:"merged_from,omitempty"`
+	ApproximateDate     string    `json:"approximate_date,omitempty"`
+	DateBasis           string    `json:"date_basis,omitempty"`
 }
 
 type SearchResponse struct {
@@ -97,9 +150,12 @@ type SearchResponse struct {
 }
 
 type ContextPackRequest struct {
-	Query   string        `json:"query"`
-	Limit   int           `json:"limit,omitempty"`
-	Filters SearchFilters `json:"filters,omitempty"`
+	Query           string        `json:"query"`
+	Limit           int           `json:"limit,omitempty"`
+	Filters         SearchFilters `json:"filters,omitempty"`
+	IncludeProposed bool          `json:"include_proposed,omitempty"`
+	IncludeRejected bool          `json:"include_rejected,omitempty"`
+	CanonicalFirst  bool          `json:"canonical_first,omitempty"`
 }
 
 type ContextPackResponse struct {

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/meistro57/frontpocket/internal/memory"
+	"github.com/meistro57/frontpocket/internal/memoryloop"
 )
 
 func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
@@ -99,12 +101,14 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampLimit(req.Limit)
-	if cached, ok := s.getCachedSearchResults(r, req); ok {
-		writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: cached})
-		return
+	if !req.IncludeProposed {
+		if cached, ok := s.getCachedSearchResults(r, req); ok {
+			writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: cached})
+			return
+		}
 	}
 
-	results, err := s.memoryStore.Search(r.Context(), req)
+	results, err := s.searchWithCanonOptions(r, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "SEARCH_FAILED",
@@ -115,7 +119,9 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results = s.filterResults(results)
-	s.setCachedSearchResults(r, req, results)
+	if !req.IncludeProposed {
+		s.setCachedSearchResults(r, req, results)
+	}
 	writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: results})
 }
 
@@ -140,7 +146,14 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampContextLimit(req.Limit)
-	resp, err := s.contextPacker.Build(r.Context(), req)
+	results, err := s.searchWithCanonOptions(r, memory.SearchRequest{
+		Query:           req.Query,
+		Limit:           req.Limit,
+		Filters:         req.Filters,
+		IncludeProposed: req.IncludeProposed,
+		IncludeRejected: req.IncludeRejected,
+		CanonicalFirst:  req.CanonicalFirst,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "CONTEXT_PACK_FAILED",
@@ -150,8 +163,128 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp.MemoryPack = s.filterResults(resp.MemoryPack)
+	resp := memory.ContextPackResponse{Query: req.Query, MemoryPack: s.filterResults(results)}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) searchWithCanonOptions(r *http.Request, req memory.SearchRequest) ([]memory.SearchResult, error) {
+	results, err := s.memoryStore.Search(r.Context(), req)
+	if err != nil {
+		return nil, err
+	}
+	if req.IncludeProposed && s.reviewQueue != nil {
+		proposed, listErr := s.reviewQueue.List(memoryloop.CandidateFilter{})
+		if listErr == nil {
+			results = append(results, s.proposedCandidatesToResults(req, proposed)...)
+		}
+	}
+	if req.CanonicalFirst {
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Canonical != results[j].Canonical {
+				return results[i].Canonical
+			}
+			if results[i].Score == results[j].Score {
+				return results[i].Timestamp.After(results[j].Timestamp)
+			}
+			return results[i].Score > results[j].Score
+		})
+	}
+	if req.Limit > 0 && len(results) > req.Limit {
+		results = results[:req.Limit]
+	}
+	return results, nil
+}
+
+func (s *Server) proposedCandidatesToResults(req memory.SearchRequest, candidates []memoryloop.Candidate) []memory.SearchResult {
+	query := strings.ToLower(strings.TrimSpace(req.Query))
+	if query == "" {
+		return nil
+	}
+	out := make([]memory.SearchResult, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !req.IncludeRejected && (candidate.Status == memory.StatusRejected || candidate.Status == memory.StatusContradicted || candidate.Status == memory.StatusOutdated) {
+			continue
+		}
+		if req.Filters.Project != "" && !strings.EqualFold(candidate.Project, req.Filters.Project) {
+			continue
+		}
+		if req.Filters.MemoryKind != "" && !strings.EqualFold(candidate.MemoryKind, req.Filters.MemoryKind) {
+			continue
+		}
+		if req.Filters.Speaker != "" && !strings.EqualFold(candidate.Speaker, req.Filters.Speaker) {
+			continue
+		}
+		searchText := strings.ToLower(candidate.Summary + " " + strings.Join(candidate.SourceQuotes, " "))
+		score := simpleSearchScore(query, searchText)
+		if score <= 0 {
+			continue
+		}
+		statusBoost := 1.0
+		switch candidate.Status {
+		case memory.StatusDirectUserStatement, memory.StatusApprovedByUser:
+			statusBoost = 1.2
+		case memory.StatusInferredFromSources:
+			statusBoost = 1.08
+		case memory.StatusNeedsReview:
+			statusBoost = 0.98
+		}
+		score = score * statusBoost
+		out = append(out, memory.SearchResult{
+			MemoryID:        candidate.ID,
+			ConversationID:  "proposed_canon",
+			SourceTitle:     "Proposed Canon",
+			SourceType:      "proposed_canon",
+			Timestamp:       candidate.CreatedAt,
+			Speaker:         candidate.Speaker,
+			Project:         candidate.Project,
+			MemoryKind:      candidate.MemoryKind,
+			Tags:            append([]string(nil), candidate.Tags...),
+			Summary:         candidate.Summary,
+			SourceQuote:     firstSourceQuote(candidate.SourceQuotes),
+			Text:            candidate.Text,
+			Score:           score,
+			Canonical:       false,
+			Confidence:      candidate.Confidence,
+			Status:          candidate.Status,
+			SourceMemoryIDs: append([]string(nil), candidate.SourceMemoryIDs...),
+			SourceQuotes:    append([]string(nil), candidate.SourceQuotes...),
+			ReviewedAt:      candidate.ReviewedAt,
+			ReviewedBy:      candidate.ReviewedBy,
+			CreatedByLoop:   candidate.CreatedByLoop,
+			Supersedes:      append([]string(nil), candidate.Supersedes...),
+			MergedFrom:      append([]string(nil), candidate.MergedFrom...),
+			ApproximateDate: candidate.ApproximateDate,
+			DateBasis:       candidate.DateBasis,
+		})
+	}
+	return out
+}
+
+func simpleSearchScore(query, text string) float64 {
+	queryTokens := strings.Fields(query)
+	if len(queryTokens) == 0 {
+		return 0
+	}
+	matches := 0
+	for _, token := range queryTokens {
+		if strings.Contains(text, token) {
+			matches++
+		}
+	}
+	if matches == 0 {
+		return 0
+	}
+	return float64(matches) / float64(len(queryTokens))
+}
+
+func firstSourceQuote(quotes []string) string {
+	for _, quote := range quotes {
+		trimmed := strings.TrimSpace(quote)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,8 @@ No crystal ball. Just retrieval with receipts.
 - **OpenAPI support:** served at `GET /openapi.json` for integrations.
 - **CORS middleware:** configurable allowed origins so browser apps can call the API directly without proxy hacks.
 - **MindDrill UI:** a built-in browser-based memory explorer with semantic search, context-pack, and browse modes. Served by a standalone `minddrill` binary on `:8089`. Includes dark mode toggle with localStorage persistence.
+- **Memory loop + canon review:** `frontpocket memory-loop` scans raw memory in batches, proposes source-backed canon candidates, and stores them in a review queue for approve/reject/merge workflows.
+- **Review APIs:** proposed canon review endpoints for listing candidates, approving into canonical memory, rejecting with reason, and merge tracking.
 - **Reflection loop:** `fp_reflect_loop.py` — iterates `frontpocket_memory`, sends each point to an LLM for deep psychological and awakening-phase analysis, and upserts findings into `fp_reflections`.
 - **Reflection query:** `fp_reflect_query.py` — semantic search and filter tool over `fp_reflections`.
 
@@ -44,6 +46,11 @@ POST   /memory/ingest/chat
 POST   /memory/search
 POST   /memory/context-pack
 POST   /memory/chat
+GET    /memory/canon/proposed
+GET    /memory/canon/proposed/{id}
+POST   /memory/canon/proposed/{id}/approve
+POST   /memory/canon/proposed/{id}/reject
+POST   /memory/canon/proposed/{id}/merge
 
 # Optional local-only debug endpoints (when DEV_DEBUG_ENDPOINTS=true)
 GET    /minddrill/memory/stats
@@ -100,6 +107,9 @@ MINDDRILL_MEMORY_ENABLED=true
 MINDDRILL_MEMORY_WRITE_MODE=summary
 MINDDRILL_MEMORY_TOP_K=6
 MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY=8
+
+# Proposed canon review queue path (JSON file)
+FRONTPOCKET_PROPOSED_CANON_PATH=data/proposed_canon.json
 ```
 
 ### 2) Build
@@ -166,13 +176,34 @@ curl -X POST http://localhost:8088/memory/search \
   -d '{"query":"source-backed Go memory","limit":5}'
 ```
 
-### 8) View memory stats
+### 8) Run memory loop dry-run
+
+```bash
+frontpocket memory-loop --batch-size 200 --dry-run
+```
+
+### 9) Write proposed canon candidates
+
+```bash
+frontpocket memory-loop --batch-size 200 --write-candidates
+```
+
+### 10) Approve / reject / merge candidates from CLI
+
+```bash
+frontpocket memory-loop list
+frontpocket memory-loop approve --id cand_xxx --reviewed-by mark
+frontpocket memory-loop reject --id cand_xxx --reason "insufficient evidence" --reviewed-by mark
+frontpocket memory-loop merge --id cand_xxx --target canon_abc --reviewed-by mark
+```
+
+### 11) View memory stats
 
 ```bash
 curl 'http://localhost:8088/memory/stats?project=FrontPocket'
 ```
 
-### 9) Save session state
+### 12) Save session state
 
 ```bash
 curl -X POST http://localhost:8088/memory/session \
@@ -370,6 +401,23 @@ CI runs on every push and pull request through `.github/workflows/test.yml`.
 
 ---
 
+## Memory loop and canonical review
+
+The memory loop organizes source-backed recollection. It scans raw memory, groups related items,
+proposes concise candidates with source provenance, and keeps those candidates in a proposed queue
+until a reviewer approves, rejects, or merges them.
+
+Key behavior:
+- Never auto-promotes candidates to canonical memory.
+- Keeps `source_memory_ids` and `source_quotes` on proposed and approved records.
+- Applies modest retrieval boost for canonical/approved/direct-user-statement results.
+- Excludes `rejected`, `contradicted`, and `outdated` items by default unless explicitly requested.
+
+Search and context-pack now support:
+- `include_proposed`
+- `include_rejected`
+- `canonical_first`
+
 ## CLI help
 
 ```bash
@@ -377,6 +425,7 @@ frontpocket --help
 frontpocket ingest --help
 frontpocket ingest chatgpt --help
 frontpocket minddrill --help
+frontpocket memory-loop --help
 ```
 
 ---
