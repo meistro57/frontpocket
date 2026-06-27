@@ -11,6 +11,12 @@ Qdrant (long-term semantic memory)
         ↘
          Redis (working/session cache)
 
+Pre-reflection cleanup loop (Python)
+  frontpocket_memory -> fp_cleaned_memory
+        ↓
+Reflection loop (Python)
+  fp_cleaned_memory -> fp_reflections
+
 Proposed canon queue (JSON review file)
         ↑
 frontpocket memory-loop + /memory/canon/proposed/*
@@ -30,6 +36,9 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - MindDrill serves `GET /config.json` from its own origin to publish the configured FrontPocket API base URL (`--api`) at runtime, so the UI has no hardcoded backend URL.
 - MindDrill chat calls `POST /memory/chat`, which retrieves both memory layers and writes back through the Go API only.
 - The memory loop proposes canon candidates but never auto-promotes them; human review is required via CLI or API approve/reject/merge actions.
+- The pre-reflection cleanup loop is mechanical (normalization/validation only), writes to `fp_cleaned_memory`, and does not mutate raw `frontpocket_memory` points.
+- Reflection reads `fp_cleaned_memory` by default (`--raw-input` restores legacy raw-source mode).
+- Reflection queries and cleanup review paths keep vectors hidden by default unless explicitly requested.
 - `FRONTPOCKET_PROPOSED_CANON_PATH` controls where proposed canon queue state is persisted (default `data/proposed_canon.json`).
 
 ## Endpoint groups

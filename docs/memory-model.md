@@ -10,16 +10,27 @@ FrontPocket stores memory points with:
 - canon lifecycle fields (`supersedes`, `merged_from`, `approximate_date`, `date_basis`, `rejection_reason`, `merge_target_id`)
 - attachment metadata when present (`attachment_refs`, `attachment_count`)
 - embedding metadata (`embedding_provider`, `embedding_model`, `embedding_dimensions`)
+- cleanup metadata in cleaned-memory layer (`cleanup_status`, `cleanup_warnings`, `reflection_blockers`, `safe_for_reflection`, `quote_quality`, `source_quote_cleaned`, `timestamp_normalized`, `speaker_normalized`)
 
 ## Storage behavior
 
 - Long-term semantic memory lives in Qdrant.
 - Working/session recall cache lives in Redis.
+- Raw memory (`frontpocket_memory`) is never overwritten by cleanup.
+- Pre-reflection cleanup writes normalized records into `fp_cleaned_memory`.
+- Reflection writes LLM outputs into `fp_reflections`, using cleaned records by default.
 - Proposed canon candidates live in a JSON review queue file (`FRONTPOCKET_PROPOSED_CANON_PATH`, default `data/proposed_canon.json`).
 - Search results may be cached for `SEARCH_CACHE_TTL_SECONDS`.
 - Session state can be saved/loaded through `POST /memory/session` and cleared through `DELETE /memory/session`.
 - Aggregate memory totals are exposed through `GET /memory/stats`.
 - Collection vector size is validated against embedding output dimensions.
+
+## Reflection readiness behavior
+
+- `safe_for_reflection=true` means a cleaned record passed mechanical checks and can be reflected by default.
+- Missing/malformed quotes and schema issues populate `reflection_blockers` and mark records unsafe.
+- `cleanup_status=needs_review` keeps records reviewable while still preserving source provenance.
+- Vectors are hidden by default in cleanup/review/query output unless explicitly requested via CLI flags.
 
 ## Retrieval behavior
 

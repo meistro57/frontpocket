@@ -67,13 +67,13 @@ def build_filter(phase: Optional[str], depth: Optional[str],
     return {"must": must} if must else None
 
 
-def search(query: str, limit: int, filters: Optional[Dict]) -> List[Dict]:
+def search(query: str, limit: int, filters: Optional[Dict], include_vectors: bool) -> List[Dict]:
     vector = embed(query)
     body: Dict[str, Any] = {
         "vector": {"name": "insight", "vector": vector},
         "limit": limit,
         "with_payload": True,
-        "with_vector": False,
+        "with_vector": include_vectors,
     }
     if filters:
         body["filter"] = filters
@@ -81,11 +81,11 @@ def search(query: str, limit: int, filters: Optional[Dict]) -> List[Dict]:
     return result.get("result", [])
 
 
-def scroll_filter(limit: int, filters: Optional[Dict]) -> List[Dict]:
+def scroll_filter(limit: int, filters: Optional[Dict], include_vectors: bool) -> List[Dict]:
     body: Dict[str, Any] = {
         "limit": limit,
         "with_payload": True,
-        "with_vector": False,
+        "with_vector": include_vectors,
         "order_by": {"key": "reflection_confidence", "direction": "desc"},
     }
     if filters:
@@ -96,6 +96,7 @@ def scroll_filter(limit: int, filters: Optional[Dict]) -> List[Dict]:
 
 def print_result(p: Dict, score: Optional[float] = None) -> None:
     pl = p.get("payload") or {}
+    vector = p.get("vector")
     score_str = f"  score={score:.3f}" if score is not None else ""
     conf_str  = f"  conf={pl.get('reflection_confidence', 0):.2f}"
     print(f"\n{'─'*60}")
@@ -122,6 +123,18 @@ def print_result(p: Dict, score: Optional[float] = None) -> None:
         print(f"  raises:   {questions[0]}")
     if pl.get("contradiction_signal"):
         print(f"  ⚡ CONTRADICTION SIGNAL")
+    if vector is None:
+        print("  vector:   hidden (use --include-vectors to fetch)")
+    elif isinstance(vector, dict):
+        names = sorted(vector.keys())
+        dims = []
+        for name in names:
+            value = vector.get(name)
+            if isinstance(value, list):
+                dims.append(f"{name}:{len(value)}")
+        print(f"  vector:   present names={names} dims={', '.join(dims) if dims else 'unknown'}")
+    elif isinstance(vector, list):
+        print(f"  vector:   present default:{len(vector)}")
 
 
 def show_stats() -> None:
@@ -161,6 +174,7 @@ def main() -> int:
     parser.add_argument("--speaker",default=None, choices=["user","assistant"])
     parser.add_argument("--contradiction", action="store_true", help="Show only contradiction-flagged reflections")
     parser.add_argument("--stats",  action="store_true", help="Show collection stats and exit")
+    parser.add_argument("--include-vectors", action="store_true", help="Include vectors in query response")
     args = parser.parse_args()
 
     if args.stats:
@@ -175,14 +189,14 @@ def main() -> int:
         print(f"\n[search] '{query}'  limit={args.limit}")
         if filters:
             print(f"[filter] {json.dumps(filters)}")
-        results = search(query, args.limit, filters)
+        results = search(query, args.limit, filters, args.include_vectors)
         for r in results:
             print_result(r, score=r.get("score"))
     else:
         print(f"\n[scroll] top {args.limit} by confidence")
         if filters:
             print(f"[filter] {json.dumps(filters)}")
-        results = scroll_filter(args.limit, filters)
+        results = scroll_filter(args.limit, filters, args.include_vectors)
         for r in results:
             print_result(r)
 

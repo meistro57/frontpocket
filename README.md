@@ -29,7 +29,7 @@ No crystal ball. Just retrieval with receipts.
 - **MindDrill UI:** a built-in browser-based memory explorer with semantic search, context-pack, and browse modes. Served by a standalone `minddrill` binary on `:8089`. Includes dark mode toggle with localStorage persistence.
 - **Memory loop + canon review:** `frontpocket memory-loop` scans raw memory in batches, proposes source-backed canon candidates, and stores them in a review queue for approve/reject/merge workflows.
 - **Review APIs:** proposed canon review endpoints for listing candidates, approving into canonical memory, rejecting with reason, and merge tracking.
-- **Reflection loop:** `fp_reflect_loop.py` — iterates `frontpocket_memory`, sends each point to an LLM for deep psychological and awakening-phase analysis, and upserts findings into `fp_reflections`.
+- **Pre-reflection cleanup + reflection loop:** `python -m frontpocket.memory_cleanup` normalizes and validates raw memory into `fp_cleaned_memory`; `fp_reflect_loop.py` reads cleaned records by default and upserts findings into `fp_reflections`.
 - **Reflection query:** `fp_reflect_query.py` — semantic search and filter tool over `fp_reflections`.
 
 ---
@@ -284,10 +284,11 @@ RAM. `memory_id`s are deterministic so interrupted imports resume idempotently.
 
 ## Reflection loop
 
-The reflection loop reads `frontpocket_memory`, sends each point to an LLM for deep
-psychological and spiritual analysis, and upserts the findings into a separate
-`fp_reflections` Qdrant collection. It mirrors the meta-bridge reflect loop architecture
-but is aimed at personal conversation history rather than a sacred-text corpus.
+The reflection pipeline runs cleanup before reflection. `python -m frontpocket.memory_cleanup`
+reads raw `frontpocket_memory`, applies mechanical normalization/validation, and writes
+cleaned records into `fp_cleaned_memory`. `fp_reflect_loop.py` reads from cleaned memory by
+default, skips unsafe records unless explicitly included, and upserts findings into
+`fp_reflections`.
 
 Each reflection point contains:
 - `themes` — 1–4 word topic tags
@@ -300,9 +301,8 @@ Each reflection point contains:
 - `contradiction_signal` — boolean flag for internal conflict
 - `reflection_confidence` — 0.0–1.0
 
-The loop also writes `fp_reflected_at`, `fp_reflection_depth`, `fp_themes`, and
-`fp_awakening_phase` flags back to the source `frontpocket_memory` points for downstream
-filtering in MindDrill.
+When running with `--raw-input`, the loop also writes `fp_reflected_at`, `fp_reflection_depth`,
+`fp_themes`, and `fp_awakening_phase` flags back to source `frontpocket_memory` points.
 
 ### Setup
 
@@ -310,11 +310,30 @@ filtering in MindDrill.
 pip install -r fp_reflect_requirements.txt
 ```
 
-### Run
+### Cleanup before reflection
 
 ```bash
-# small test batch — user messages only
+# dry-run cleanup summary
+python -m frontpocket.memory_cleanup --batch-size 200 --dry-run
+
+# write cleaned records for reflection
+python -m frontpocket.memory_cleanup --batch-size 200 --write-cleaned
+
+# include vectors in cleaned payload review/export (default hides vectors)
+python -m frontpocket.memory_cleanup --batch-size 200 --write-cleaned --include-vectors
+```
+
+### Run reflection
+
+```bash
+# default: read from fp_cleaned_memory, skip unsafe cleaned records
 python fp_reflect_loop.py --limit 20 --speaker user
+
+# include cleaned records marked needs_review/unsafe
+python fp_reflect_loop.py --limit 200 --include-needs-review
+
+# force legacy raw input from frontpocket_memory
+python fp_reflect_loop.py --raw-input --limit 200
 
 # full run overnight
 python fp_reflect_loop.py --limit 5000 --speaker user --quiet
@@ -351,6 +370,9 @@ python fp_reflect_query.py "crying tears joy" --speaker user
 
 # collection stats
 python fp_reflect_query.py --stats
+
+# include vectors in result output (default hides vectors)
+python fp_reflect_query.py "awakening anxiety" --include-vectors --limit 3
 ```
 
 ---
@@ -359,8 +381,9 @@ python fp_reflect_query.py --stats
 
 | Collection | Contents | Created by |
 |---|---|---|
-| `frontpocket_memory` | All ingested conversation memory points | `frontpocket ingest` |
-| `fp_reflections` | LLM reflections on memory points | `fp_reflect_loop.py` |
+| `frontpocket_memory` | All ingested raw conversation memory points | `frontpocket ingest` |
+| `fp_cleaned_memory` | Mechanically normalized/validated pre-reflection memory points | `python -m frontpocket.memory_cleanup` |
+| `fp_reflections` | LLM reflections on cleaned (default) or raw memory points | `fp_reflect_loop.py` |
 | `minddrill_chat_memory` | MindDrill chat session memory | MindDrill chat mode |
 
 ---
