@@ -3,25 +3,25 @@ package memory
 import "time"
 
 const (
-	KindFact              = "fact"
-	KindPreference        = "preference"
-	KindProjectContext    = "project_context"
-	KindDecision          = "decision"
-	KindTechnicalSolution = "technical_solution"
-	KindCreativeArtifact  = "creative_artifact"
-	KindRunningJoke       = "running_joke"
-	KindPersonalContext   = "personal_context"
-	KindRelationship      = "relationship_context"
-	KindResearchNote      = "research_note"
-	KindSystemNote        = "system_note"
-	KindChatTurn          = "chat_turn"
-	KindSessionSummary    = "session_summary"
-	KindUserPreference    = "user_preference"
-	KindProjectDecision   = "project_decision"
-	KindToolResult        = "tool_result"
-	KindUserAssertedFact  = "user_asserted_fact"
-	KindCanonicalTimeline = "canonical_timeline"
-	KindInferredPattern   = "inferred_pattern"
+	KindFact               = "fact"
+	KindPreference         = "preference"
+	KindProjectContext     = "project_context"
+	KindDecision           = "decision"
+	KindTechnicalSolution  = "technical_solution"
+	KindCreativeArtifact   = "creative_artifact"
+	KindRunningJoke        = "running_joke"
+	KindPersonalContext    = "personal_context"
+	KindRelationship       = "relationship_context"
+	KindResearchNote       = "research_note"
+	KindSystemNote         = "system_note"
+	KindChatTurn           = "chat_turn"
+	KindSessionSummary     = "session_summary"
+	KindUserPreference     = "user_preference"
+	KindProjectDecision    = "project_decision"
+	KindToolResult         = "tool_result"
+	KindUserAssertedFact   = "user_asserted_fact"
+	KindCanonicalTimeline  = "canonical_timeline"
+	KindInferredPattern    = "inferred_pattern"
 	KindPersonaInstruction = "persona_instruction"
 	KindUnresolvedQuestion = "unresolved_question"
 	KindContradictionNote  = "contradiction_note"
@@ -58,39 +58,39 @@ type MessageRecord struct {
 }
 
 type MemoryPoint struct {
-	MemoryID            string    `json:"memory_id"`
-	ConversationID      string    `json:"conversation_id"`
-	SessionID           string    `json:"session_id,omitempty"`
-	SourceType          string    `json:"source_type"`
-	SourceTitle         string    `json:"source_title"`
-	Timestamp           time.Time `json:"timestamp"`
-	Speaker             string    `json:"speaker"`
-	Project             string    `json:"project,omitempty"`
-	Tags                []string  `json:"tags,omitempty"`
-	MemoryKind          string    `json:"memory_kind"`
-	Importance          float64   `json:"importance,omitempty"`
-	Text                string    `json:"text"`
-	SourceQuote         string    `json:"source_quote"`
-	Summary             string    `json:"summary,omitempty"`
-	UsedMemoryIDs       []string  `json:"used_memory_ids,omitempty"`
-	EmbeddingProvider   string    `json:"embedding_provider"`
-	EmbeddingModel      string    `json:"embedding_model"`
-	EmbeddingDimensions int       `json:"embedding_dimensions"`
-	Canonical           bool      `json:"canonical,omitempty"`
-	Confidence          string    `json:"confidence,omitempty"`
-	Status              string    `json:"status,omitempty"`
-	SourceMemoryIDs     []string  `json:"source_memory_ids,omitempty"`
-	SourceQuotes        []string  `json:"source_quotes,omitempty"`
+	MemoryID            string     `json:"memory_id"`
+	ConversationID      string     `json:"conversation_id"`
+	SessionID           string     `json:"session_id,omitempty"`
+	SourceType          string     `json:"source_type"`
+	SourceTitle         string     `json:"source_title"`
+	Timestamp           time.Time  `json:"timestamp"`
+	Speaker             string     `json:"speaker"`
+	Project             string     `json:"project,omitempty"`
+	Tags                []string   `json:"tags,omitempty"`
+	MemoryKind          string     `json:"memory_kind"`
+	Importance          float64    `json:"importance,omitempty"`
+	Text                string     `json:"text"`
+	SourceQuote         string     `json:"source_quote"`
+	Summary             string     `json:"summary,omitempty"`
+	UsedMemoryIDs       []string   `json:"used_memory_ids,omitempty"`
+	EmbeddingProvider   string     `json:"embedding_provider"`
+	EmbeddingModel      string     `json:"embedding_model"`
+	EmbeddingDimensions int        `json:"embedding_dimensions"`
+	Canonical           bool       `json:"canonical,omitempty"`
+	Confidence          string     `json:"confidence,omitempty"`
+	Status              string     `json:"status,omitempty"`
+	SourceMemoryIDs     []string   `json:"source_memory_ids,omitempty"`
+	SourceQuotes        []string   `json:"source_quotes,omitempty"`
 	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
-	ReviewedBy          string    `json:"reviewed_by,omitempty"`
-	CreatedByLoop       bool      `json:"created_by_loop,omitempty"`
-	Supersedes          []string  `json:"supersedes,omitempty"`
-	MergedFrom          []string  `json:"merged_from,omitempty"`
-	ApproximateDate     string    `json:"approximate_date,omitempty"`
-	DateBasis           string    `json:"date_basis,omitempty"`
-	RejectionReason     string    `json:"rejection_reason,omitempty"`
-	MergeTargetID       string    `json:"merge_target_id,omitempty"`
-	Vector              []float32 `json:"-"`
+	ReviewedBy          string     `json:"reviewed_by,omitempty"`
+	CreatedByLoop       bool       `json:"created_by_loop,omitempty"`
+	Supersedes          []string   `json:"supersedes,omitempty"`
+	MergedFrom          []string   `json:"merged_from,omitempty"`
+	ApproximateDate     string     `json:"approximate_date,omitempty"`
+	DateBasis           string     `json:"date_basis,omitempty"`
+	RejectionReason     string     `json:"rejection_reason,omitempty"`
+	MergeTargetID       string     `json:"merge_target_id,omitempty"`
+	Vector              []float32  `json:"-"`
 }
 
 type SearchFilters struct {
@@ -103,45 +103,45 @@ type SearchFilters struct {
 }
 
 type SearchRequest struct {
-	Query            string        `json:"query"`
-	Limit            int           `json:"limit,omitempty"`
-	Filters          SearchFilters `json:"filters,omitempty"`
-	IncludeProposed  bool          `json:"include_proposed,omitempty"`
-	IncludeRejected  bool          `json:"include_rejected,omitempty"`
-	CanonicalFirst   bool          `json:"canonical_first,omitempty"`
+	Query           string        `json:"query"`
+	Limit           int           `json:"limit,omitempty"`
+	Filters         SearchFilters `json:"filters,omitempty"`
+	IncludeProposed bool          `json:"include_proposed,omitempty"`
+	IncludeRejected bool          `json:"include_rejected,omitempty"`
+	CanonicalFirst  bool          `json:"canonical_first,omitempty"`
 }
 
 type SearchResult struct {
-	MemoryID            string    `json:"memory_id"`
-	ConversationID      string    `json:"conversation_id"`
-	SessionID           string    `json:"session_id,omitempty"`
-	SourceTitle         string    `json:"source_title"`
-	SourceType          string    `json:"source_type"`
-	Timestamp           time.Time `json:"timestamp"`
-	Speaker             string    `json:"speaker"`
-	Project             string    `json:"project,omitempty"`
-	MemoryKind          string    `json:"memory_kind"`
-	Tags                []string  `json:"tags,omitempty"`
-	Summary             string    `json:"summary"`
-	SourceQuote         string    `json:"source_quote,omitempty"`
-	Text                string    `json:"text,omitempty"`
-	UsedMemoryIDs       []string  `json:"used_memory_ids,omitempty"`
-	Score               float64   `json:"score"`
-	EmbeddingProvider   string    `json:"embedding_provider"`
-	EmbeddingModel      string    `json:"embedding_model"`
-	EmbeddingDimensions int       `json:"embedding_dimensions"`
-	Canonical           bool      `json:"canonical,omitempty"`
-	Confidence          string    `json:"confidence,omitempty"`
-	Status              string    `json:"status,omitempty"`
-	SourceMemoryIDs     []string  `json:"source_memory_ids,omitempty"`
-	SourceQuotes        []string  `json:"source_quotes,omitempty"`
+	MemoryID            string     `json:"memory_id"`
+	ConversationID      string     `json:"conversation_id"`
+	SessionID           string     `json:"session_id,omitempty"`
+	SourceTitle         string     `json:"source_title"`
+	SourceType          string     `json:"source_type"`
+	Timestamp           time.Time  `json:"timestamp"`
+	Speaker             string     `json:"speaker"`
+	Project             string     `json:"project,omitempty"`
+	MemoryKind          string     `json:"memory_kind"`
+	Tags                []string   `json:"tags,omitempty"`
+	Summary             string     `json:"summary"`
+	SourceQuote         string     `json:"source_quote,omitempty"`
+	Text                string     `json:"text,omitempty"`
+	UsedMemoryIDs       []string   `json:"used_memory_ids,omitempty"`
+	Score               float64    `json:"score"`
+	EmbeddingProvider   string     `json:"embedding_provider"`
+	EmbeddingModel      string     `json:"embedding_model"`
+	EmbeddingDimensions int        `json:"embedding_dimensions"`
+	Canonical           bool       `json:"canonical,omitempty"`
+	Confidence          string     `json:"confidence,omitempty"`
+	Status              string     `json:"status,omitempty"`
+	SourceMemoryIDs     []string   `json:"source_memory_ids,omitempty"`
+	SourceQuotes        []string   `json:"source_quotes,omitempty"`
 	ReviewedAt          *time.Time `json:"reviewed_at,omitempty"`
-	ReviewedBy          string    `json:"reviewed_by,omitempty"`
-	CreatedByLoop       bool      `json:"created_by_loop,omitempty"`
-	Supersedes          []string  `json:"supersedes,omitempty"`
-	MergedFrom          []string  `json:"merged_from,omitempty"`
-	ApproximateDate     string    `json:"approximate_date,omitempty"`
-	DateBasis           string    `json:"date_basis,omitempty"`
+	ReviewedBy          string     `json:"reviewed_by,omitempty"`
+	CreatedByLoop       bool       `json:"created_by_loop,omitempty"`
+	Supersedes          []string   `json:"supersedes,omitempty"`
+	MergedFrom          []string   `json:"merged_from,omitempty"`
+	ApproximateDate     string     `json:"approximate_date,omitempty"`
+	DateBasis           string     `json:"date_basis,omitempty"`
 }
 
 type SearchResponse struct {
@@ -177,11 +177,11 @@ type IngestChatResponse struct {
 }
 
 type MemoryStats struct {
-	Total      int            `json:"total"`
-	ByKind     map[string]int `json:"by_kind,omitempty"`
-	BySpeaker  map[string]int `json:"by_speaker,omitempty"`
-	ByProject  map[string]int `json:"by_project,omitempty"`
-	TopTitles  []string       `json:"top_titles,omitempty"`
+	Total     int            `json:"total"`
+	ByKind    map[string]int `json:"by_kind,omitempty"`
+	BySpeaker map[string]int `json:"by_speaker,omitempty"`
+	ByProject map[string]int `json:"by_project,omitempty"`
+	TopTitles []string       `json:"top_titles,omitempty"`
 }
 
 type SessionRequest struct {

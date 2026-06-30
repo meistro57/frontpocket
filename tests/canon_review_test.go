@@ -30,14 +30,14 @@ func TestProposedCanonApproveAndRejectEndpoints(t *testing.T) {
 	defer embeddingServer.Close()
 
 	cfg := config.Config{
-		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088},
-		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
-		Embedding: config.EmbeddingConfig{Provider: "ollama", OllamaModel: "nomic-embed-text", OllamaBaseURL: embeddingServer.URL, Dimensions: 4},
-		Chat:      config.ChatConfig{Provider: "none"},
-		Ingestion: config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},
-		Chunking:  config.ChunkingConfig{Size: 900, Overlap: 150, MinSize: 120},
-		Search:    config.SearchConfig{DefaultLimit: 5, MaxLimit: 20, IncludeSourceQuote: true, IncludeFullText: true, CacheTTLSeconds: 30},
+		App:         config.AppConfig{Host: "127.0.0.1", Port: 8088},
+		Qdrant:      config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
+		Redis:       config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Embedding:   config.EmbeddingConfig{Provider: "ollama", OllamaModel: "nomic-embed-text", OllamaBaseURL: embeddingServer.URL, Dimensions: 4},
+		Chat:        config.ChatConfig{Provider: "none"},
+		Ingestion:   config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},
+		Chunking:    config.ChunkingConfig{Size: 900, Overlap: 150, MinSize: 120},
+		Search:      config.SearchConfig{DefaultLimit: 5, MaxLimit: 20, IncludeSourceQuote: true, IncludeFullText: true, CacheTTLSeconds: 30},
 		ContextPack: config.ContextPackConfig{DefaultLimit: 8, MaxLimit: 20},
 	}
 

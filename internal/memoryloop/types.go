@@ -33,14 +33,14 @@ type Candidate struct {
 }
 
 type HarvestFilter struct {
-	Project            string
-	Speaker            string
-	MemoryKind         string
-	Since              time.Time
-	Until              time.Time
-	BatchSize          int
-	Limit              int
-	CanonicalOnly      bool
+	Project              string
+	Speaker              string
+	MemoryKind           string
+	Since                time.Time
+	Until                time.Time
+	BatchSize            int
+	Limit                int
+	CanonicalOnly        bool
 	IncludeExistingCanon bool
 }
 

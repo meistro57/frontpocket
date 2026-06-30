@@ -225,7 +225,7 @@ func (s *Server) openAPISpec() map[string]any {
 					"responses": map[string]any{
 						"200": map[string]any{
 							"description": "Proposed canon candidates.",
-							"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object"}}},
+							"content":     map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object"}}},
 						},
 						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
 						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
@@ -505,9 +505,9 @@ func (s *Server) openAPISpec() map[string]any {
 					"type":     "object",
 					"required": []string{"query"},
 					"properties": map[string]any{
-						"query":   map[string]any{"type": "string", "minLength": 1},
-						"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.ContextPack.MaxLimit},
-						"filters": map[string]any{"$ref": "#/components/schemas/SearchFilters"},
+						"query":            map[string]any{"type": "string", "minLength": 1},
+						"limit":            map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.ContextPack.MaxLimit},
+						"filters":          map[string]any{"$ref": "#/components/schemas/SearchFilters"},
 						"include_proposed": map[string]any{"type": "boolean"},
 						"include_rejected": map[string]any{"type": "boolean"},
 						"canonical_first":  map[string]any{"type": "boolean"},

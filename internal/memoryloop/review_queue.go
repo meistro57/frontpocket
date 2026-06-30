@@ -15,12 +15,12 @@ import (
 )
 
 type CandidateFilter struct {
-	Status      string
-	MemoryKind  string
-	Project     string
-	Speaker     string
-	Reviewed    *bool
-	Confidence  string
+	Status     string
+	MemoryKind string
+	Project    string
+	Speaker    string
+	Reviewed   *bool
+	Confidence string
 }
 
 type FileReviewQueue struct {
