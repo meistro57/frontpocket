@@ -34,6 +34,7 @@ __pycache__/
 
 # Logs
 *.log
+log.txt
 logs/
 
 # Local data
