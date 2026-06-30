@@ -135,7 +135,8 @@ func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, cont
 		return buildMindDrillAnswer(message, mind, front), provider, model, nil
 	}
 
-	baseSystemPrompt := "You are Eli inside FrontPocket. Answer the user with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections."
+	baseSystemPrompt := "You are MindDrill's chat assistant, helping the user explore and reason over their FrontPocket memory archive. Answer with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections. " +
+		"IMPORTANT: the retrieved memory sections are a SIMILARITY SAMPLE, not an exhaustive dataset — they are the small number of chunks closest in meaning to the user's message, drawn from a much larger corpus. If the user asks something that requires an exhaustive count, complete list, or 'how many X exist', say plainly that vector retrieval cannot answer that reliably (it samples by similarity, not completeness), and suggest they use the search or browse tools with a narrower query instead of guessing a number."
 	if trimmed := strings.TrimSpace(systemPrompt); trimmed != "" {
 		baseSystemPrompt += "\n\nUser-provided persona/system prompt information:\n" + trimmed
 	}

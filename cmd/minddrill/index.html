@@ -460,6 +460,41 @@ a:hover { text-decoration: underline; }
 .system-prompt-panel textarea:focus { border-color: var(--purple-border); }
 .system-prompt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
 .system-prompt-status { font-size: 12px; color: var(--text3); }
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.chat-turn {
+  border-radius: var(--radius-lg);
+  padding: .7rem .9rem;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-turn-user {
+  background: var(--purple-bg);
+  color: var(--purple-dark);
+  align-self: flex-end;
+  max-width: 80%;
+}
+.chat-turn-assistant {
+  background: var(--bg);
+  border: 0.5px solid var(--border);
+  align-self: flex-start;
+  max-width: 92%;
+}
+.chat-turn-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  opacity: .65;
+  margin-bottom: 4px;
+}
 .chat-answer {
   background: var(--bg);
   border: 0.5px solid var(--border);
@@ -574,7 +609,12 @@ a:hover { text-decoration: underline; }
       <div class="chat-memory-status" id="chat-memory-status">using 0 FrontPocket memories + 0 MindDrill memories</div>
       <div class="chat-meta"><span id="chat-session-id"></span><span id="chat-provider-model"></span></div>
       <div id="chat-error"></div>
-      <div id="chat-answer" class="chat-answer">MindDrill chat is ready.</div>
+      <div id="chat-thread" class="chat-thread">
+        <div class="chat-turn chat-turn-assistant">
+          <div class="chat-turn-label">minddrill</div>
+          MindDrill chat is ready.
+        </div>
+      </div>
       <div class="chat-memory-block">
         <details>
           <summary>FrontPocket memories used</summary>
@@ -589,7 +629,7 @@ a:hover { text-decoration: underline; }
 
     <div id="panel-search" style="display:none">
       <div class="search-bar">
-        <input type="text" id="q" placeholder="search your memory… consciousness, steel, Eli, meta-bridge, GMLAN…" autofocus />
+        <input type="text" id="q" placeholder="search your memory…" autofocus />
         <button class="btn btn-primary" onclick="doSearch()" id="search-btn">
           <span id="search-icon">🔍</span> search
         </button>
@@ -659,33 +699,7 @@ let chatSessionId = '';
 let chatFrontMemories = [];
 let chatMindMemories = [];
 let systemPromptInfo = '';
-
-const probes = [
-  'Eli GPT awakening mind persona',
-  'consciousness soul contracts pre-birth agreements',
-  'meta-bridge knowledge archaeology corpus',
-  'steel detailing fabrication shop drawings Adams Steel',
-  'GM ECU GMLAN reverse engineering J2534',
-  'Dolores Cannon QHHT hypnosis regression',
-  'Seth Jane Roberts channeling',
-  'ROOT ACCESS book reality engineering Eli',
-  'Antioch Awakening Minds meetup group',
-  'FrontPocket memory layer Go API',
-  'Arduino stepper motor YM2612 FM synth chip',
-  'point cloud 3D SOR filter PyVista',
-  'New Earth vibration frequency 528hz',
-  'ChatBridge AI multi-provider orchestration',
-  'VectorView Qdrant Three.js visualizer',
-  'ArchiMind RAG hybrid BM25 search',
-  'Vectoreologist HDBSCAN clustering bridges',
-  'SteelFlow MRP fabrication software Fabtrol',
-  'PointMeistro point cloud segmentation',
-  'Bashar Kryon Ra material channeled entities',
-  'Navy Pier wave wall Soldier Field CTA',
-  'Node-RED CAN bus socketcan dashboard',
-  'lucid dreaming guide spiritual journey',
-  'quantum physics consciousness observer effect',
-];
+let probes = [];
 
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -795,11 +809,17 @@ async function loadStats() {
     const r = await fetch(apiURL('/memory/stats'));
     if (!r.ok) return;
     const d = await r.json();
-    // FrontPocket returns { total, by_kind, by_speaker, by_project }
+    // FrontPocket returns { total, by_kind, by_speaker, by_project, top_titles }
     document.getElementById('s-points').textContent   = fmtNum(d.total);
     document.getElementById('s-speakers').textContent = fmtNum(d.by_speaker ? Object.keys(d.by_speaker).length : null);
     document.getElementById('s-kinds').textContent    = fmtNum(d.by_kind    ? Object.keys(d.by_kind).length    : null);
     document.getElementById('s-projects').textContent = fmtNum(d.by_project ? Object.keys(d.by_project).length : null);
+
+    const titles = Array.isArray(d.top_titles) ? d.top_titles.filter(Boolean) : [];
+    if (titles.length) {
+      probes = titles;
+      buildProbes();
+    }
   } catch {}
 }
 
@@ -821,10 +841,16 @@ function setMode(mode, el) {
 
 function buildProbes() {
   const el = document.getElementById('probe-list');
+  el.innerHTML = '';
+  if (!probes.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">probes will appear once memory stats load…</div>';
+    return;
+  }
   probes.forEach(p => {
     const b = document.createElement('button');
     b.className = 'probe-btn';
     b.textContent = p;
+    b.title = p;
     b.onclick = () => {
       document.getElementById('q').value = p;
       setMode('search', document.querySelectorAll('.mode-tab')[1]);
@@ -934,12 +960,35 @@ function renderChatMemoryList(elId, items, ns) {
   el.innerHTML = items.map((item, i) => cardHTML(item, i, ns)).join('');
 }
 
+function appendChatTurn(role, text) {
+  const thread = document.getElementById('chat-thread');
+  const turn = document.createElement('div');
+  turn.className = role === 'user' ? 'chat-turn chat-turn-user' : 'chat-turn chat-turn-assistant';
+  const label = document.createElement('div');
+  label.className = 'chat-turn-label';
+  label.textContent = role === 'user' ? 'you' : 'minddrill';
+  turn.appendChild(label);
+  const body = document.createElement('span');
+  body.textContent = text;
+  turn.appendChild(body);
+  thread.appendChild(turn);
+  thread.scrollTop = thread.scrollHeight;
+  return turn;
+}
+
+let pendingAssistantTurn = null;
+
 function renderChatResponse(data) {
   const front = Array.isArray(data.used_frontpocket_memories) ? data.used_frontpocket_memories : [];
   const mind = Array.isArray(data.used_minddrill_memories) ? data.used_minddrill_memories : [];
   chatFrontMemories = front;
   chatMindMemories = mind;
-  document.getElementById('chat-answer').textContent = data.answer || '';
+  if (pendingAssistantTurn) {
+    pendingAssistantTurn.querySelector('span').textContent = data.answer || '';
+    pendingAssistantTurn = null;
+  } else {
+    appendChatTurn('assistant', data.answer || '');
+  }
   document.getElementById('chat-memory-status').textContent = `using ${front.length} FrontPocket memories + ${mind.length} MindDrill memories`;
   document.getElementById('chat-provider-model').textContent = `${data.provider || 'none'} / ${data.model || 'retrieval-only'}`;
   renderChatMemoryList('chat-front-memories', front, 'cf');
@@ -950,6 +999,7 @@ async function doChat(rememberThis) {
   const input = document.getElementById('chat-input');
   const message = input.value.trim();
   if (!message) return;
+  input.value = '';
 
   const promptInput = document.getElementById('system-prompt-input');
   systemPromptInfo = (promptInput?.value || systemPromptInfo).trim();
@@ -958,6 +1008,11 @@ async function doChat(rememberThis) {
   btn.disabled = true;
   document.getElementById('chat-send-icon').innerHTML = '<span class="spinner"></span>';
   document.getElementById('chat-error').innerHTML = '';
+  appendChatTurn('user', message);
+  pendingAssistantTurn = appendChatTurn('assistant', '');
+  pendingAssistantTurn.querySelector('span').innerHTML = '<span class="spinner"></span>&nbsp; thinking…';
+  document.getElementById('chat-input').disabled = true;
+  document.getElementById('chat-remember-btn').disabled = true;
 
   try {
     const d = await fetchJSON('/memory/chat', {
@@ -973,9 +1028,17 @@ async function doChat(rememberThis) {
     renderChatResponse(d);
   } catch (e) {
     document.getElementById('chat-error').innerHTML = `<div class="error-box">Chat failed: ${esc(e.message)}</div>`;
+    if (pendingAssistantTurn) {
+      pendingAssistantTurn.remove();
+      pendingAssistantTurn = null;
+    }
+    input.value = message;
   } finally {
     btn.disabled = false;
     document.getElementById('chat-send-icon').textContent = '💬';
+    document.getElementById('chat-input').disabled = false;
+    document.getElementById('chat-remember-btn').disabled = false;
+    document.getElementById('chat-input').focus();
   }
 }
 
@@ -991,7 +1054,11 @@ async function forgetChatSession() {
 
   localStorage.removeItem('minddrill-chat-session-id');
   ensureChatSession();
-  document.getElementById('chat-answer').textContent = 'MindDrill chat session reset.';
+  document.getElementById('chat-thread').innerHTML = `
+    <div class="chat-turn chat-turn-assistant">
+      <div class="chat-turn-label">minddrill</div>
+      MindDrill chat session reset.
+    </div>`;
   document.getElementById('chat-memory-status').textContent = 'using 0 FrontPocket memories + 0 MindDrill memories';
   chatFrontMemories = [];
   chatMindMemories = [];
@@ -1171,7 +1238,8 @@ async function browseMore() { await fetchBrowsePage(false); }
 
 async function fetchBrowsePage(reset) {
   const speaker = document.getElementById('browse-speaker').value;
-  const body = { query: 'consciousness steel AI memory', limit: 20 };
+  const seed = probes.length ? probes[Math.floor(Math.random() * probes.length)] : 'recent memory';
+  const body = { query: seed, limit: 20 };
   if (browseOffset) body.offset = browseOffset;
   if (speaker) body.filter = { speaker };
   try {
@@ -1203,6 +1271,7 @@ document.getElementById('chat-input').addEventListener('keydown', e => { if (e.k
 async function initApp() {
   initTheme();
   loadHistory();
+  loadSystemPrompt();
   buildProbes();
   ensureChatSession();
   chatFrontMemories = [];

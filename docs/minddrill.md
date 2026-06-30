@@ -15,15 +15,20 @@ back to `go run ./cmd/minddrill`):
 frontpocket minddrill
 ```
 
-As the standalone binary built by `./make_all.sh`:
+As the standalone binary built by `./make_all.sh` (binaries are written to `bin/`):
 
 ```bash
-minddrill                              # serves on http://localhost:8089
-minddrill --port 9000                  # custom port
-minddrill --api http://localhost:8088  # point at a non-default API base URL
+./make_all.sh                          # builds bin/frontpocket and bin/minddrill
+./bin/minddrill                        # serves on http://localhost:8089
+./bin/minddrill --port 9000            # custom port
+./bin/minddrill --api http://localhost:8088  # point at a non-default API base URL
 ```
 
 Then open the printed URL (default <http://localhost:8089>) in your browser.
+
+> Build output always lands in `bin/`. Run binaries from there (`./bin/frontpocket`,
+> `./bin/minddrill`) rather than from the repo root, to avoid picking up a stale binary
+> from an older build path.
 
 ## Options
 
@@ -63,6 +68,23 @@ MindDrill is a thin client over the FrontPocket API:
 - `POST /memory/chat` — chat response with split memory context and optional `system_prompt` persona guidance
 - `DELETE /memory/chat/session` — clear the current MindDrill chat session and its chat memory
 
+## Quick probes
+
+The sidebar's "quick probes" are generated dynamically from the corpus, not hardcoded. On load,
+MindDrill calls `GET /memory/stats`, which now returns a `top_titles` field — a sample of
+distinct `source_title` values pulled from the corpus (capped at 60 titles, sampled from up to
+4,000 points). The sidebar renders these as clickable probe buttons, and the browse tab uses a
+random probe as its seed query. This means every FrontPocket install shows probes relevant to
+that user's own corpus, with no user-specific content shipped in the public repo.
+
+## Conversation thread
+
+Chat mode renders a scrolling thread of bubbles (your messages right-aligned, MindDrill's
+replies left-aligned) rather than a single overwritten answer block, so prior turns in a session
+stay visible while you converse. A "thinking…" placeholder bubble appears immediately on send
+and is replaced in place once the response arrives; on error, the placeholder is removed and
+your message is restored to the input box for retry.
+
 ## Chat mode memory separation
 
 MindDrill chat keeps continuity in a dedicated Qdrant collection (`MINDDRILL_MEMORY_COLLECTION`,
@@ -88,3 +110,9 @@ The response includes:
 MindDrill writes new chat memory through the Go API only, using `MINDDRILL_MEMORY_WRITE_MODE`
 (`summary` by default, or `raw`) and periodic session summaries controlled by
 `MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY`.
+
+Chat-memory points are embedded automatically on write if they don't already carry a vector
+(`QdrantMemoryStore.Upsert` embeds any point with an empty `Vector` field using the configured
+embedder before upserting). This means `minddrill_chat_memory` persists durably in Qdrant across
+restarts, rather than only living in the in-process fallback store for the lifetime of a single
+server run.

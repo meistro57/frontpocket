@@ -339,6 +339,12 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 		ByProject: make(map[string]int),
 	}
 
+	const maxTitleSample = 4000 // cap how many points we scroll for title sampling, large corpora can have 100k+
+	const maxDistinctTitles = 60
+	titleSeen := make(map[string]struct{})
+	titles := make([]string, 0, maxDistinctTitles)
+	scanned := 0
+
 	var offset any
 	lastOffset := ""
 	for {
@@ -388,6 +394,15 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 			if project := strings.TrimSpace(asString(point.Payload["project"])); project != "" {
 				stats.ByProject[project]++
 			}
+			if scanned < maxTitleSample {
+				scanned++
+				if title := strings.TrimSpace(asString(point.Payload["source_title"])); title != "" {
+					if _, seen := titleSeen[title]; !seen && len(titles) < maxDistinctTitles {
+						titleSeen[title] = struct{}{}
+						titles = append(titles, title)
+					}
+				}
+			}
 		}
 
 		nextOffset := response.Result.NextPageOffset
@@ -408,6 +423,8 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 	if stats.Total == 0 && s.fallback != nil {
 		return s.fallback.Stats(ctx, filters)
 	}
+
+	stats.TopTitles = titles
 
 	return stats, nil
 }

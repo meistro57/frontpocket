@@ -137,6 +137,10 @@ func (s *InMemoryStore) Stats(_ context.Context, filters SearchFilters) (MemoryS
 		ByProject: make(map[string]int),
 	}
 
+	const maxDistinctTitles = 60
+	titleSeen := make(map[string]struct{})
+	titles := make([]string, 0, maxDistinctTitles)
+
 	for _, point := range points {
 		if !matchesFilters(point, filters) {
 			continue
@@ -152,7 +156,15 @@ func (s *InMemoryStore) Stats(_ context.Context, filters SearchFilters) (MemoryS
 		if project := strings.TrimSpace(point.Project); project != "" {
 			stats.ByProject[project]++
 		}
+		if title := strings.TrimSpace(point.SourceTitle); title != "" {
+			if _, seen := titleSeen[title]; !seen && len(titles) < maxDistinctTitles {
+				titleSeen[title] = struct{}{}
+				titles = append(titles, title)
+			}
+		}
 	}
+
+	stats.TopTitles = titles
 
 	return stats, nil
 }

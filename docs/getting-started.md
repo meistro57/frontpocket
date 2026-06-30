@@ -36,6 +36,28 @@ FRONTPOCKET_PROPOSED_CANON_PATH=data/proposed_canon.json
 # DEV_DEBUG_ENDPOINTS=true
 ```
 
+To enable generated chat answers (instead of the retrieval-only fallback that just lists
+memory hits as text), set a chat provider. OpenRouter is the simplest path if you're already
+using it for embeddings:
+
+```env
+CHAT_PROVIDER=openrouter
+OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-4.6
+```
+
+With `CHAT_PROVIDER=none` (the default), `/memory/chat` still works but returns a templated
+summary of retrieved memory rather than a generated answer — useful for testing retrieval
+without burning API credits, not intended as the normal operating mode.
+
+Search result volume also affects chat quality — the default `SEARCH_DEFAULT_LIMIT` controls
+how many memory chunks feed each chat turn. A low limit (e.g. 5) can starve broad questions
+of relevant context even when the corpus has plenty of matching material:
+
+```env
+SEARCH_DEFAULT_LIMIT=15
+SEARCH_MAX_LIMIT=30
+```
+
 ## 2) Build + ensure helper scripts are executable
 
 ```bash
@@ -117,7 +139,7 @@ If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest t
 With the API running, launch the MindDrill memory explorer:
 
 ```bash
-frontpocket minddrill          # or: minddrill / go run ./cmd/minddrill
+frontpocket minddrill          # or: ./bin/minddrill / go run ./cmd/minddrill
 ```
 
 Open the printed URL (default <http://localhost:8089>). MindDrill serves `/config.json`
@@ -177,6 +199,11 @@ Speaker-aware behavior in this pipeline:
 - Project hints can be inferred from `source_title` when project is empty; final project assignment remains manual/approved.
 
 ## 18) Run tests
+
+> `./make_all.sh` builds both binaries into `bin/`. Always launch `./bin/frontpocket` and
+> `./bin/minddrill` from there — not a binary of the same name sitting in the repo root from
+> an older build — or you may be running stale code with a current backend, which is
+> confusing to debug.
 
 ```bash
 go test ./...

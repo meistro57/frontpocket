@@ -177,10 +177,11 @@ type IngestChatResponse struct {
 }
 
 type MemoryStats struct {
-	Total     int            `json:"total"`
-	ByKind    map[string]int `json:"by_kind,omitempty"`
-	BySpeaker map[string]int `json:"by_speaker,omitempty"`
-	ByProject map[string]int `json:"by_project,omitempty"`
+	Total      int            `json:"total"`
+	ByKind     map[string]int `json:"by_kind,omitempty"`
+	BySpeaker  map[string]int `json:"by_speaker,omitempty"`
+	ByProject  map[string]int `json:"by_project,omitempty"`
+	TopTitles  []string       `json:"top_titles,omitempty"`
 }
 
 type SessionRequest struct {
