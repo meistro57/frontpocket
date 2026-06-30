@@ -277,6 +277,19 @@ func TestMemoryChatUsesOpenRouterGemmaForAnswer(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("failed decoding OpenRouter request: %v", err)
 		}
+
+		// With Qdrant unreachable the first-pass search comes back empty, so the handler
+		// makes a query-refinement call before the answer call. Answer the refinement call
+		// with a throwaway query and only assert/answer on the context-pack (answer) call.
+		if len(req.Messages) == 2 && strings.Contains(req.Messages[0].Content, "search queries") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]any{"role": "assistant", "content": "refined search angle"},
+				}},
+			})
+			return
+		}
+
 		requestedModel = req.Model
 		if len(req.Messages) != 2 || req.Messages[1].Role != "user" || !strings.Contains(req.Messages[1].Content, "USER MESSAGE:") {
 			t.Fatalf("expected context-pack user message, got %#v", req.Messages)
