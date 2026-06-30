@@ -228,6 +228,7 @@ type ChatMessageRequest struct {
 
 type ChatMessageResponse struct {
 	Answer                  string         `json:"answer"`
+	Suggestions             []string       `json:"suggestions,omitempty"`
 	UsedFrontPocketMemories []SearchResult `json:"used_frontpocket_memories"`
 	UsedMindDrillMemories   []SearchResult `json:"used_minddrill_memories"`
 	ContextPack             string         `json:"context_pack"`

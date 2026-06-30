@@ -495,6 +495,31 @@ a:hover { text-decoration: underline; }
   opacity: .65;
   margin-bottom: 4px;
 }
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.chat-suggestion-chip {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  border: 0.5px solid var(--purple-border);
+  background: var(--purple-bg);
+  color: var(--purple-dark);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.3;
+}
+.chat-suggestion-chip:hover {
+  background: var(--purple-border);
+}
+.chat-suggestion-chip:active {
+  transform: scale(0.97);
+}
 .chat-answer {
   background: var(--bg);
   border: 0.5px solid var(--border);
@@ -976,6 +1001,29 @@ function appendChatTurn(role, text) {
   return turn;
 }
 
+function renderSuggestionChips(turn, suggestions) {
+  const existing = turn.querySelector('.chat-suggestions');
+  if (existing) existing.remove();
+  if (!Array.isArray(suggestions) || suggestions.length === 0) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-suggestions';
+  suggestions.forEach(s => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chat-suggestion-chip';
+    chip.textContent = s;
+    chip.onclick = () => {
+      document.getElementById('chat-input').value = s;
+      doChat(false);
+    };
+    wrap.appendChild(chip);
+  });
+  turn.appendChild(wrap);
+  const thread = document.getElementById('chat-thread');
+  thread.scrollTop = thread.scrollHeight;
+}
+
 let pendingAssistantTurn = null;
 
 function renderChatResponse(data) {
@@ -983,12 +1031,15 @@ function renderChatResponse(data) {
   const mind = Array.isArray(data.used_minddrill_memories) ? data.used_minddrill_memories : [];
   chatFrontMemories = front;
   chatMindMemories = mind;
+  let turn;
   if (pendingAssistantTurn) {
     pendingAssistantTurn.querySelector('span').textContent = data.answer || '';
+    turn = pendingAssistantTurn;
     pendingAssistantTurn = null;
   } else {
-    appendChatTurn('assistant', data.answer || '');
+    turn = appendChatTurn('assistant', data.answer || '');
   }
+  renderSuggestionChips(turn, data.suggestions);
   document.getElementById('chat-memory-status').textContent = `using ${front.length} FrontPocket memories + ${mind.length} MindDrill memories`;
   document.getElementById('chat-provider-model').textContent = `${data.provider || 'none'} / ${data.model || 'retrieval-only'}`;
   renderChatMemoryList('chat-front-memories', front, 'cf');

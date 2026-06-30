@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,28 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 		mindResults = s.filterResults(mindResults)
 	}
 
+	// Second-pass retrieval: if the first search came back thin or seems to be matching
+	// the *shape* of the question rather than real content (low scores, or mostly other
+	// chat-turn questions rather than source material), ask the chat model for a sharper
+	// search angle and re-search before answering. Skipped when retrieval already looks
+	// solid, or when there's no chat client to ask.
+	if s.chatClient != nil && retrievalLooksThin(frontResults, mindResults) {
+		if refinedQuery := s.proposeRefinedQuery(r, req.Message, frontResults, mindResults); refinedQuery != "" {
+			refinedFrontReq := memory.SearchRequest{
+				Query: refinedQuery,
+				Limit: frontLimit,
+				Filters: memory.SearchFilters{
+					Project: req.Project,
+				},
+			}
+			if refinedFront, refErr := s.memoryStore.Search(r.Context(), refinedFrontReq); refErr == nil {
+				frontResults = mergeSearchResults(frontResults, s.filterResults(refinedFront), frontLimit)
+			} else {
+				s.logger.Warn("minddrill refined search failed", "session_id", req.SessionID, "error", refErr)
+			}
+		}
+	}
+
 	contextPack := buildMindDrillPrompt(req.Message, req.SystemPrompt, mindResults, frontResults)
 	answer, provider, model, err := s.generateChatAnswer(r, req.Message, req.SystemPrompt, contextPack, mindResults, frontResults)
 	if err != nil {
@@ -111,8 +134,11 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	answer, suggestions := extractSuggestions(answer)
+
 	resp := memory.ChatMessageResponse{
 		Answer:                  answer,
+		Suggestions:             suggestions,
 		UsedFrontPocketMemories: frontResults,
 		UsedMindDrillMemories:   mindResults,
 		ContextPack:             contextPack,
@@ -129,6 +155,138 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// extractSuggestions looks for a trailing 'SUGGESTIONS: a | b | c' line in the model's
+// answer, strips it out, and returns the cleaned answer plus the parsed suggestion list.
+// If no such line is present, the answer is returned unchanged with a nil slice.
+func extractSuggestions(answer string) (string, []string) {
+	lines := strings.Split(answer, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		const prefix = "SUGGESTIONS:"
+		if !strings.HasPrefix(strings.ToUpper(trimmed), prefix) {
+			break // only look at the very last non-blank line
+		}
+
+		raw := strings.TrimSpace(trimmed[len(prefix):])
+		parts := strings.Split(raw, "|")
+		suggestions := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.Trim(strings.TrimSpace(p), "\"'")
+			if p != "" && len(p) <= 120 {
+				suggestions = append(suggestions, p)
+			}
+		}
+		if len(suggestions) == 0 {
+			break
+		}
+
+		cleaned := strings.TrimSpace(strings.Join(lines[:i], "\n"))
+		return cleaned, suggestions
+	}
+	return answer, nil
+}
+
+func retrievalLooksThin(front, mind []memory.SearchResult) bool {
+	if len(front) == 0 {
+		return true
+	}
+
+	// Average score across the front results: a low average suggests the query matched
+	// loosely, not on real content.
+	var sum float64
+	for _, r := range front {
+		sum += r.Score
+	}
+	avg := sum / float64(len(front))
+	if avg < 0.55 {
+		return true
+	}
+
+	// Self-referential retrieval: most of the top hits are themselves prior MindDrill
+	// chat turns rather than source-backed memory, which is the "hall of mirrors"
+	// pattern where a vague question keeps matching other instances of itself.
+	selfReferential := 0
+	for _, r := range front {
+		if strings.EqualFold(strings.TrimSpace(r.SourceType), "minddrill_chat") {
+			selfReferential++
+		}
+	}
+	if len(front) > 0 && float64(selfReferential)/float64(len(front)) > 0.6 {
+		return true
+	}
+
+	return false
+}
+
+// proposeRefinedQuery asks the chat model for a sharper search angle when the first-pass
+// retrieval looked thin or self-referential. Returns an empty string if it can't produce
+// one, in which case the caller just proceeds with the original results.
+func (s *Server) proposeRefinedQuery(r *http.Request, originalMessage string, front, mind []memory.SearchResult) string {
+	if s.chatClient == nil {
+		return ""
+	}
+	_ = mind // reserved for future use if MindDrill chat history should also inform the refined query
+
+	var b strings.Builder
+	b.WriteString("The user asked: \"")
+	b.WriteString(originalMessage)
+	b.WriteString("\"\n\n")
+	b.WriteString("A first-pass vector search against their memory corpus came back thin or self-referential ")
+	b.WriteString("(matching the shape of the question rather than real content). Here is what the weak search returned:\n\n")
+	b.WriteString(formatMemoryList(front))
+	b.WriteString("\nPropose ONE better search query — a concrete topic, theme, project name, or angle — that would surface ")
+	b.WriteString("actual substantive content from this person's memory archive instead of more meta-questions. ")
+	b.WriteString("Pick something specific and likely to exist in a personal chat/document archive (a recurring project, ")
+	b.WriteString("a strong theme, a domain like work or a hobby, an emotional thread, anything concrete). ")
+	b.WriteString("Reply with ONLY the search query text, 3-8 words, nothing else — no quotes, no explanation, no preamble.")
+
+	result, err := s.chatClient.Complete(r.Context(), []chat.Message{
+		{Role: "system", Content: "You generate concise, content-rich search queries. Reply with only the query, nothing else."},
+		{Role: "user", Content: b.String()},
+	})
+	if err != nil {
+		s.logger.Warn("minddrill query refinement failed", "error", err)
+		return ""
+	}
+
+	refined := strings.Trim(strings.TrimSpace(result), "\"'")
+	if refined == "" || len(refined) > 200 {
+		return ""
+	}
+	return refined
+}
+
+// mergeSearchResults combines two result sets, de-duplicating by memory ID and preferring
+// the higher score for any overlap, then returns the top `limit` by score.
+func mergeSearchResults(a, b []memory.SearchResult, limit int) []memory.SearchResult {
+	byID := make(map[string]memory.SearchResult, len(a)+len(b))
+	for _, r := range a {
+		byID[r.MemoryID] = r
+	}
+	for _, r := range b {
+		existing, ok := byID[r.MemoryID]
+		if !ok || r.Score > existing.Score {
+			byID[r.MemoryID] = r
+		}
+	}
+
+	merged := make([]memory.SearchResult, 0, len(byID))
+	for _, r := range byID {
+		merged = append(merged, r)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].Score > merged[j].Score
+	})
+
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
+}
+
 func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
 	provider, model := chatProviderModel(s.cfg.Chat)
 	if s.chatClient == nil {
@@ -136,7 +294,8 @@ func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, cont
 	}
 
 	baseSystemPrompt := "You are MindDrill's chat assistant, helping the user explore and reason over their FrontPocket memory archive. Answer with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections. " +
-		"IMPORTANT: the retrieved memory sections are a SIMILARITY SAMPLE, not an exhaustive dataset — they are the small number of chunks closest in meaning to the user's message, drawn from a much larger corpus. If the user asks something that requires an exhaustive count, complete list, or 'how many X exist', say plainly that vector retrieval cannot answer that reliably (it samples by similarity, not completeness), and suggest they use the search or browse tools with a narrower query instead of guessing a number."
+		"IMPORTANT: the retrieved memory sections are a SIMILARITY SAMPLE, not an exhaustive dataset — they are the small number of chunks closest in meaning to the user's message, drawn from a much larger corpus. If the user asks something that requires an exhaustive count, complete list, or 'how many X exist', say plainly that vector retrieval cannot answer that reliably (it samples by similarity, not completeness), and suggest they use the search or browse tools with a narrower query instead of guessing a number. " +
+		"FOLLOW-UP SUGGESTIONS: when it's natural to offer the user a few directions to dig further (which is often, given this is an exploratory memory tool), end your reply with a final line starting with exactly 'SUGGESTIONS:' followed by 2-4 short follow-up prompts separated by ' | '. Each suggestion should be phrased as something the user could literally click and send as-is (first person, e.g. 'tell me more about the marriage thread', not 'the marriage thread'). Keep each suggestion under 8 words. Omit the SUGGESTIONS line entirely if there's nothing natural to suggest — do not force it on short factual answers."
 	if trimmed := strings.TrimSpace(systemPrompt); trimmed != "" {
 		baseSystemPrompt += "\n\nUser-provided persona/system prompt information:\n" + trimmed
 	}
