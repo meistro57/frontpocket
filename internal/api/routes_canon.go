@@ -20,7 +20,7 @@ type mergeRequest struct {
 }
 
 type approveRequest struct {
-	ReviewedBy string               `json:"reviewed_by"`
+	ReviewedBy string                `json:"reviewed_by"`
 	Edited     *memoryloop.Candidate `json:"edited,omitempty"`
 }
 

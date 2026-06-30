@@ -29,9 +29,9 @@ type QdrantClient struct {
 
 func NewQdrantClient(url string) *QdrantClient {
 	return &QdrantClient{
-		baseURL: strings.TrimRight(url, "/"),
-		http: &http.Client{},
-		logger: slog.Default(),
+		baseURL:        strings.TrimRight(url, "/"),
+		http:           &http.Client{},
+		logger:         slog.Default(),
 		requestTimeout: 30 * time.Second,
 	}
 }
