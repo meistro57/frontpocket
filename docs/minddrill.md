@@ -116,3 +116,21 @@ Chat-memory points are embedded automatically on write if they don't already car
 embedder before upserting). This means `minddrill_chat_memory` persists durably in Qdrant across
 restarts, rather than only living in the in-process fallback store for the lifetime of a single
 server run.
+
+## Request timeouts
+
+A single `POST /memory/chat` turn can make up to **two** sequential LLM calls — an optional
+query-refinement call when first-pass retrieval looks thin, followed by the answer-generation
+call. The chat client (`internal/chat`) allows each call up to 60s, so a slow turn can legitimately
+run close to two minutes. The timeouts are layered so they never abort a turn that is still
+working:
+
+- **Backend**: `handleMemoryChat` wraps the whole request in a `context.WithTimeout` of
+  `chatRequestTimeout` (120s), bounding the searches and both LLM calls together. If exceeded,
+  the server returns a clean `CHAT_COMPLETION_FAILED` error instead of hanging.
+- **Frontend**: the MindDrill chat `fetch` uses a 130s `AbortSignal` ceiling — deliberately just
+  above the backend bound so the server's error surfaces before the browser aborts.
+
+If you tune the per-call timeout in `internal/chat`, keep `chatRequestTimeout` and the frontend
+`fetch` ceiling above the worst-case sum (refinement + answer) so the signal never trips before
+the model responds.

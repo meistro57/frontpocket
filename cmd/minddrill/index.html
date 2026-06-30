@@ -1075,7 +1075,7 @@ async function doChat(rememberThis) {
         system_prompt: systemPromptInfo.trim(),
         remember_this: !!rememberThis,
       }),
-    }, 20000);
+    }, 130000);
     renderChatResponse(d);
   } catch (e) {
     document.getElementById('chat-error').innerHTML = `<div class="error-box">Chat failed: ${esc(e.message)}</div>`;

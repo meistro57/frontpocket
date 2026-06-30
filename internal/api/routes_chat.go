@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,12 @@ import (
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/store"
 )
+
+// chatRequestTimeout bounds the whole chat request — including the up-to-two
+// sequential LLM calls (query refinement + answer generation), each of which
+// the chat client allows 60s. It is kept just under the frontend's abort
+// deadline so the server returns a clean error before the browser gives up.
+const chatRequestTimeout = 120 * time.Second
 
 func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	var req memory.ChatMessageRequest
@@ -62,6 +69,9 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 		mindLimit = s.maxSearch
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), chatRequestTimeout)
+	defer cancel()
+
 	frontReq := memory.SearchRequest{
 		Query: req.Message,
 		Limit: frontLimit,
@@ -69,7 +79,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 			Project: req.Project,
 		},
 	}
-	frontResults, err := s.memoryStore.Search(r.Context(), frontReq)
+	frontResults, err := s.memoryStore.Search(ctx, frontReq)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "CHAT_FRONTPOCKET_SEARCH_FAILED",
@@ -89,7 +99,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 				Project: req.Project,
 			},
 		}
-		mindResults, err = s.mindDrillStore.Search(r.Context(), mindReq)
+		mindResults, err = s.mindDrillStore.Search(ctx, mindReq)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 				Code:    "CHAT_MINDDRILL_SEARCH_FAILED",
@@ -107,7 +117,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	// search angle and re-search before answering. Skipped when retrieval already looks
 	// solid, or when there's no chat client to ask.
 	if s.chatClient != nil && retrievalLooksThin(frontResults, mindResults) {
-		if refinedQuery := s.proposeRefinedQuery(r, req.Message, frontResults, mindResults); refinedQuery != "" {
+		if refinedQuery := s.proposeRefinedQuery(ctx, req.Message, frontResults, mindResults); refinedQuery != "" {
 			refinedFrontReq := memory.SearchRequest{
 				Query: refinedQuery,
 				Limit: frontLimit,
@@ -115,7 +125,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 					Project: req.Project,
 				},
 			}
-			if refinedFront, refErr := s.memoryStore.Search(r.Context(), refinedFrontReq); refErr == nil {
+			if refinedFront, refErr := s.memoryStore.Search(ctx, refinedFrontReq); refErr == nil {
 				frontResults = mergeSearchResults(frontResults, s.filterResults(refinedFront), frontLimit)
 			} else {
 				s.logger.Warn("minddrill refined search failed", "session_id", req.SessionID, "error", refErr)
@@ -124,7 +134,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contextPack := buildMindDrillPrompt(req.Message, req.SystemPrompt, mindResults, frontResults)
-	answer, provider, model, err := s.generateChatAnswer(r, req.Message, req.SystemPrompt, contextPack, mindResults, frontResults)
+	answer, provider, model, err := s.generateChatAnswer(ctx, req.Message, req.SystemPrompt, contextPack, mindResults, frontResults)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, memory.ErrorBody{
 			Code:    "CHAT_COMPLETION_FAILED",
@@ -224,7 +234,7 @@ func retrievalLooksThin(front, mind []memory.SearchResult) bool {
 // proposeRefinedQuery asks the chat model for a sharper search angle when the first-pass
 // retrieval looked thin or self-referential. Returns an empty string if it can't produce
 // one, in which case the caller just proceeds with the original results.
-func (s *Server) proposeRefinedQuery(r *http.Request, originalMessage string, front, mind []memory.SearchResult) string {
+func (s *Server) proposeRefinedQuery(ctx context.Context, originalMessage string, front, mind []memory.SearchResult) string {
 	if s.chatClient == nil {
 		return ""
 	}
@@ -243,7 +253,7 @@ func (s *Server) proposeRefinedQuery(r *http.Request, originalMessage string, fr
 	b.WriteString("a strong theme, a domain like work or a hobby, an emotional thread, anything concrete). ")
 	b.WriteString("Reply with ONLY the search query text, 3-8 words, nothing else — no quotes, no explanation, no preamble.")
 
-	result, err := s.chatClient.Complete(r.Context(), []chat.Message{
+	result, err := s.chatClient.Complete(ctx, []chat.Message{
 		{Role: "system", Content: "You generate concise, content-rich search queries. Reply with only the query, nothing else."},
 		{Role: "user", Content: b.String()},
 	})
@@ -287,7 +297,7 @@ func mergeSearchResults(a, b []memory.SearchResult, limit int) []memory.SearchRe
 	return merged
 }
 
-func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
+func (s *Server) generateChatAnswer(ctx context.Context, message, systemPrompt, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
 	provider, model := chatProviderModel(s.cfg.Chat)
 	if s.chatClient == nil {
 		return buildMindDrillAnswer(message, mind, front), provider, model, nil
@@ -300,7 +310,7 @@ func (s *Server) generateChatAnswer(r *http.Request, message, systemPrompt, cont
 		baseSystemPrompt += "\n\nUser-provided persona/system prompt information:\n" + trimmed
 	}
 
-	answer, err := s.chatClient.Complete(r.Context(), []chat.Message{
+	answer, err := s.chatClient.Complete(ctx, []chat.Message{
 		{
 			Role:    "system",
 			Content: baseSystemPrompt,
