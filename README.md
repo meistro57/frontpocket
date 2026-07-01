@@ -31,6 +31,11 @@ No crystal ball. Just retrieval with receipts.
 - **Review APIs:** proposed canon review endpoints for listing candidates, approving into canonical memory, rejecting with reason, and merge tracking.
 - **Pre-reflection cleanup + reflection loop:** `python -m frontpocket.memory_cleanup` normalizes and validates raw memory into `fp_cleaned_memory`; `fp_reflect_loop.py` reads cleaned records by default and upserts findings into `fp_reflections`.
 - **Reflection query:** `fp_reflect_query.py` — semantic search and filter tool over `fp_reflections`.
+- **ChatGPT export ingest:** `frontpocket ingest chatgpt` normalizes a ChatGPT export (zip or
+  folder) into memory points, resolving image/PDF/audio/etc. attachments against the export's
+  own mapping files instead of dropping them — images get a real vision-model caption, other
+  attachments get a metadata-only description. Also captures `is_starred`, shared-conversation,
+  and thumbs up/down feedback signals when present in the export.
 
 ---
 
@@ -276,10 +281,29 @@ frontpocket ingest chatgpt ./chatgpt-export.zip --since 2026-01-01
 # resumable (survives interruption)
 frontpocket ingest chatgpt ./chatgpt-export.zip --project FrontPocket \
   --resume .frontpocket-progress.json
+
+# targeted single-conversation debugging (exact id match)
+frontpocket ingest chatgpt ./chatgpt-export.zip \
+  --conversation-id 6a3a89c7-bf88-83ea-a918-334e6e1e8801
+
+# cap the number of conversations processed
+frontpocket ingest chatgpt ./chatgpt-export.zip --limit 50
+
+# resolve attachment metadata without spending on vision captioning calls
+frontpocket ingest chatgpt ./chatgpt-export.zip --no-caption
 ```
 
 Large exports are embedded and written in batches — a multi-gigabyte archive won't exhaust
 RAM. `memory_id`s are deterministic so interrupted imports resume idempotently.
+
+Image, PDF, audio, and other attachments referenced in the export are resolved against
+`conversation_asset_file_names.json` and `library_files.json` and embedded as real content
+instead of a placeholder stub — images get a real caption from a vision-capable model
+(`VISION_MODEL`, see `docs/providers.md`), non-image attachments get a metadata-only
+description with no vision API cost. `--dry-run` reports resolved/unresolved counts and how
+many attachments would trigger a real vision call before you spend on a full run. `is_starred`,
+shared-conversation, and thumbs up/down feedback signals from the export are captured on each
+point as well (`user_starred`, `user_shared`, `feedback_rating`, etc. — see `docs/memory-model.md`).
 
 ---
 

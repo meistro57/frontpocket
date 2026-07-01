@@ -52,3 +52,30 @@ That indicates Qdrant rejected a non-UUID point ID on insert. Current FrontPocke
 
 - `OPENAI_API_KEY` is required when `EMBEDDING_PROVIDER=openai`.
 - `OPENROUTER_API_KEY` is required when `EMBEDDING_PROVIDER=openrouter`.
+
+## Vision captioning (ChatGPT attachment ingest)
+
+`frontpocket ingest chatgpt` resolves image attachments and captions them
+through a separate vision-capable chat model call — the caption text is
+then embedded through the normal text-embedding pipeline, so no embedding
+provider needs to support multimodal input directly.
+
+```env
+VISION_MODEL=google/gemini-2.5-flash
+```
+
+This is intentionally decoupled from `CHAT_PROVIDER`'s model: captioning a
+large image corpus is a distinct cost/quality tradeoff from
+summarization/reflection, and always goes through OpenRouter (reusing
+`OPENROUTER_API_KEY` / `OPENROUTER_BASE_URL` from the embedding config)
+regardless of which `EMBEDDING_PROVIDER` is active.
+
+- Non-image attachments (PDF, audio, video, pasted text/markdown) never
+  reach this model — they get a metadata-only description with zero
+  captioning cost.
+- Pass `--no-caption` to `ingest chatgpt` to resolve attachment metadata
+  without spending on any vision calls (filenames/mime types still get
+  populated; images fall back to the placeholder stub text).
+- Always run `--dry-run` first on a new export — it reports resolved vs.
+  unresolved counts and how many attachments would actually trigger a
+  vision call, before any real API cost is spent.

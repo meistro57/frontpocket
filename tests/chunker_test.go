@@ -32,3 +32,37 @@ func TestChunkTextEmptyInput(t *testing.T) {
 		t.Fatalf("expected no chunks, got %d", len(chunks))
 	}
 }
+
+func TestChunkTextPrefersSentenceBoundary(t *testing.T) {
+	chunker := memory.Chunker{Size: 40, Overlap: 5, MinSize: 3}
+	text := "This is the first sentence. This is the second sentence. This is the third one."
+
+	chunks := chunker.ChunkText(text)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks[:len(chunks)-1] {
+		last := chunk[len(chunk)-1]
+		if last != '.' {
+			t.Fatalf("chunk %d does not end on a sentence boundary: %q", i, chunk)
+		}
+	}
+}
+
+func TestChunkTextFallsBackToHardCutWithoutBoundaries(t *testing.T) {
+	// No spaces or punctuation at all (e.g. an id or unbroken token) should
+	// still chunk deterministically via hard character cuts.
+	chunker := memory.Chunker{Size: 10, Overlap: 2, MinSize: 3}
+	text := strings.Repeat("x", 35)
+
+	chunks := chunker.ChunkText(text)
+	if len(chunks) == 0 {
+		t.Fatalf("expected chunks for unbroken text, got none")
+	}
+	for _, chunk := range chunks {
+		if strings.TrimSpace(chunk) == "" {
+			t.Fatalf("got an empty chunk in fallback mode")
+		}
+	}
+}

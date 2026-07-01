@@ -306,6 +306,184 @@ func TestChatGPTImportSupportsWrappedConversationsPayload(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportConversationSignals(t *testing.T) {
+	folder := t.TempDir()
+	payload := []map[string]any{
+		{
+			"id":         "conv-signals",
+			"title":      "Signals",
+			"is_starred": true,
+			"mapping": map[string]any{
+				"n1": map[string]any{
+					"id": "n1",
+					"message": map[string]any{
+						"id":      "m1",
+						"author":  map[string]any{"role": "user"},
+						"content": map[string]any{"content_type": "text", "parts": []any{"signal text"}},
+					},
+				},
+			},
+		},
+		{
+			"id":    "conv-no-share",
+			"title": "No Share",
+			"mapping": map[string]any{
+				"n2": map[string]any{
+					"id": "n2",
+					"message": map[string]any{
+						"id":      "m2",
+						"author":  map[string]any{"role": "user"},
+						"content": map[string]any{"content_type": "text", "parts": []any{"plain text"}},
+					},
+				},
+			},
+		},
+	}
+	writeConversationsJSON(t, folder, payload)
+	writeSharedConversationsJSON(t, folder, []map[string]any{{
+		"conversation_id": "conv-signals",
+		"id":              "share-123",
+		"is_anonymous":    false,
+	}})
+	writeMessageFeedbackJSON(t, folder, []map[string]any{
+		{
+			"conversation_id": "conv-signals",
+			"create_time":     1735689602,
+			"id":              "fb-1",
+			"rating":          "thumbs_up",
+			"content":         "{}",
+			"update_time":     1735689603,
+		},
+		{
+			"conversation_id": "conv-signals",
+			"create_time":     1735689604,
+			"id":              "fb-2",
+			"rating":          "thumbs_down",
+			"content":         "{\"text\": \"totally lost personality\"}",
+			"update_time":     1735689700,
+		},
+	})
+
+	result, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	byConversation := make(map[string]memory.NormalizedMemoryRecord)
+	for _, record := range result.Records {
+		if _, exists := byConversation[record.ConversationID]; !exists {
+			byConversation[record.ConversationID] = record
+		}
+	}
+
+	tests := []struct {
+		name           string
+		conversationID string
+		assert         func(t *testing.T, rec memory.NormalizedMemoryRecord)
+	}{
+		{
+			name:           "is_starred true carries through",
+			conversationID: "conv-signals",
+			assert: func(t *testing.T, rec memory.NormalizedMemoryRecord) {
+				if !rec.UserStarred {
+					t.Fatalf("expected UserStarred true, got false")
+				}
+			},
+		},
+		{
+			name:           "shared conversation carries share fields",
+			conversationID: "conv-signals",
+			assert: func(t *testing.T, rec memory.NormalizedMemoryRecord) {
+				if !rec.UserShared {
+					t.Fatalf("expected UserShared true, got false")
+				}
+				if rec.ShareID != "share-123" {
+					t.Fatalf("expected ShareID share-123, got %q", rec.ShareID)
+				}
+			},
+		},
+		{
+			name:           "feedback uses latest update_time with parsed note",
+			conversationID: "conv-signals",
+			assert: func(t *testing.T, rec memory.NormalizedMemoryRecord) {
+				if rec.FeedbackRating != "thumbs_down" {
+					t.Fatalf("expected FeedbackRating thumbs_down, got %q", rec.FeedbackRating)
+				}
+				if rec.FeedbackNote != "totally lost personality" {
+					t.Fatalf("expected FeedbackNote parsed text, got %q", rec.FeedbackNote)
+				}
+				expectedAt := time.Unix(1735689700, 0).UTC().Format(time.RFC3339)
+				if rec.FeedbackAt != expectedAt {
+					t.Fatalf("expected FeedbackAt %q, got %q", expectedAt, rec.FeedbackAt)
+				}
+			},
+		},
+		{
+			name:           "absent shared conversation stays zero-value",
+			conversationID: "conv-no-share",
+			assert: func(t *testing.T, rec memory.NormalizedMemoryRecord) {
+				if rec.UserShared {
+					t.Fatalf("expected UserShared false, got true")
+				}
+				if rec.ShareID != "" {
+					t.Fatalf("expected empty ShareID, got %q", rec.ShareID)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, ok := byConversation[tc.conversationID]
+			if !ok {
+				t.Fatalf("missing record for conversation %q", tc.conversationID)
+			}
+			tc.assert(t, rec)
+		})
+	}
+}
+
+func TestChatGPTImportOptionalSignalFiles(t *testing.T) {
+	folder := t.TempDir()
+	writeConversationsJSON(t, folder, sampleConversationPayload())
+
+	shareSignals, err := memory.LoadShareSignals(folder)
+	if err != nil {
+		t.Fatalf("LoadShareSignals returned error for missing file: %v", err)
+	}
+	if len(shareSignals) != 0 {
+		t.Fatalf("expected empty share signals for missing file, got %d", len(shareSignals))
+	}
+
+	feedbackSignals, err := memory.LoadFeedbackSignals(folder)
+	if err != nil {
+		t.Fatalf("LoadFeedbackSignals returned error for missing file: %v", err)
+	}
+	if len(feedbackSignals) != 0 {
+		t.Fatalf("expected empty feedback signals for missing file, got %d", len(feedbackSignals))
+	}
+
+	result, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+	})
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	for _, record := range result.Records {
+		if record.UserStarred {
+			t.Fatalf("expected UserStarred false by default, got true for %q", record.ConversationID)
+		}
+		if record.UserShared {
+			t.Fatalf("expected UserShared false, got true for %q", record.ConversationID)
+		}
+		if record.ShareID != "" || record.FeedbackRating != "" || record.FeedbackNote != "" || record.FeedbackAt != "" {
+			t.Fatalf("expected zero-value signal fields, got %+v", record)
+		}
+	}
+}
+
 func writeConversationsJSON(t *testing.T, dir string, payload any) {
 	t.Helper()
 	encoded, err := json.Marshal(payload)
@@ -315,6 +493,30 @@ func writeConversationsJSON(t *testing.T, dir string, payload any) {
 	path := filepath.Join(dir, "conversations.json")
 	if err := os.WriteFile(path, encoded, 0o644); err != nil {
 		t.Fatalf("failed writing conversations.json: %v", err)
+	}
+}
+
+func writeSharedConversationsJSON(t *testing.T, dir string, payload any) {
+	t.Helper()
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed marshaling shared_conversations payload: %v", err)
+	}
+	path := filepath.Join(dir, "shared_conversations.json")
+	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		t.Fatalf("failed writing shared_conversations.json: %v", err)
+	}
+}
+
+func writeMessageFeedbackJSON(t *testing.T, dir string, payload any) {
+	t.Helper()
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed marshaling message_feedback payload: %v", err)
+	}
+	path := filepath.Join(dir, "message_feedback.json")
+	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		t.Fatalf("failed writing message_feedback.json: %v", err)
 	}
 }
 

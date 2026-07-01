@@ -15,6 +15,7 @@ type Config struct {
 	Redis           RedisConfig
 	Embedding       EmbeddingConfig
 	Chat            ChatConfig
+	Vision          VisionConfig
 	MindDrillMemory MindDrillMemoryConfig
 	Chunking        ChunkingConfig
 	Ingestion       IngestionConfig
@@ -69,6 +70,15 @@ type ChatConfig struct {
 	OllamaModel     string
 	OpenAIModel     string
 	OpenRouterModel string
+}
+
+// VisionConfig configures the image-captioning call used to resolve
+// attachment references during ChatGPT import (see ingest chatgpt). This is
+// intentionally separate from ChatConfig: captioning ~1,700 images is a
+// distinct cost/quality tradeoff from the reflection/summarizer chat model,
+// so it gets its own model choice rather than silently reusing CHAT_PROVIDER.
+type VisionConfig struct {
+	Model string
 }
 
 type MindDrillMemoryConfig struct {
@@ -162,6 +172,9 @@ func Load() (Config, error) {
 			OllamaModel:     getEnv("OLLAMA_CHAT_MODEL", "llama3.1"),
 			OpenAIModel:     getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
 			OpenRouterModel: getEnv("OPENROUTER_CHAT_MODEL", "google/gemma-4-31b-it"),
+		},
+		Vision: VisionConfig{
+			Model: getEnv("VISION_MODEL", "google/gemini-2.5-flash"),
 		},
 		MindDrillMemory: MindDrillMemoryConfig{
 			Collection:          getEnv("MINDDRILL_MEMORY_COLLECTION", "minddrill_chat_memory"),

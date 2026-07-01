@@ -43,6 +43,11 @@ storage/
 qdrant_storage/
 redis_data/
 
+# Extracted ChatGPT export data used for local ingest testing — real
+# private chat history, never commit this.
+unzipped/
+/unzipped*/
+
 # Temporary files
 tmp/
 temp/

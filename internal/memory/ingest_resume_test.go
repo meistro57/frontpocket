@@ -88,6 +88,42 @@ func TestIngestFlushesInBatches(t *testing.T) {
 	}
 }
 
+func TestIngestCarriesConversationSignals(t *testing.T) {
+	store := &countingStore{InMemoryStore: NewInMemoryStore()}
+	ing := newIngestor(store)
+	records := []MessageRecord{makeRecords(1)[0]}
+	records[0].UserStarred = true
+	records[0].UserShared = true
+	records[0].ShareID = "share-abc"
+	records[0].FeedbackRating = "thumbs_down"
+	records[0].FeedbackNote = "totally lost personality"
+	records[0].FeedbackAt = "2025-01-01T00:00:00Z"
+
+	points, err := ing.Ingest(context.Background(), records)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if len(points) != 1 {
+		t.Fatalf("expected 1 inserted point, got %d", len(points))
+	}
+	point := points[0]
+	if !point.UserStarred || !point.UserShared {
+		t.Fatalf("expected user signal booleans to carry through, got starred=%v shared=%v", point.UserStarred, point.UserShared)
+	}
+	if point.ShareID != "share-abc" {
+		t.Fatalf("expected ShareID share-abc, got %q", point.ShareID)
+	}
+	if point.FeedbackRating != "thumbs_down" {
+		t.Fatalf("expected FeedbackRating thumbs_down, got %q", point.FeedbackRating)
+	}
+	if point.FeedbackNote != "totally lost personality" {
+		t.Fatalf("expected FeedbackNote to carry through, got %q", point.FeedbackNote)
+	}
+	if point.FeedbackAt != "2025-01-01T00:00:00Z" {
+		t.Fatalf("expected FeedbackAt to carry through, got %q", point.FeedbackAt)
+	}
+}
+
 func TestIngestResumesFromJournal(t *testing.T) {
 	dir := t.TempDir()
 	journalPath := filepath.Join(dir, "progress.json")

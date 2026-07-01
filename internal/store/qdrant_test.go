@@ -194,6 +194,12 @@ func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
 		SourceTitle:         "MindDrill Chat",
 		Timestamp:           now,
 		Speaker:             "user",
+		UserStarred:         true,
+		UserShared:          true,
+		ShareID:             "share-123",
+		FeedbackRating:      "thumbs_down",
+		FeedbackNote:        "totally lost personality",
+		FeedbackAt:          "2025-12-12T03:14:43Z",
 		MemoryKind:          memory.KindUserPreference,
 		Summary:             "Keep responses concise.",
 		Text:                "remember this: keep responses concise",
@@ -213,6 +219,24 @@ func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
 	}
 	if len(ids) != 2 || ids[0] != "front_1" || ids[1] != "mind_2" {
 		t.Fatalf("unexpected used_memory_ids: %#v", ids)
+	}
+	if payload["user_starred"] != true {
+		t.Fatalf("expected payload user_starred true, got %v", payload["user_starred"])
+	}
+	if payload["user_shared"] != true {
+		t.Fatalf("expected payload user_shared true, got %v", payload["user_shared"])
+	}
+	if payload["share_id"] != "share-123" {
+		t.Fatalf("expected payload share_id share-123, got %v", payload["share_id"])
+	}
+	if payload["feedback_rating"] != "thumbs_down" {
+		t.Fatalf("expected payload feedback_rating thumbs_down, got %v", payload["feedback_rating"])
+	}
+	if payload["feedback_note"] != "totally lost personality" {
+		t.Fatalf("expected payload feedback_note value, got %v", payload["feedback_note"])
+	}
+	if payload["feedback_at"] != "2025-12-12T03:14:43Z" {
+		t.Fatalf("expected payload feedback_at value, got %v", payload["feedback_at"])
 	}
 }
 

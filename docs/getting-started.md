@@ -129,10 +129,51 @@ frontpocket ingest chatgpt ./chatgpt-export.zip --out data/processed/chatgpt_nor
 frontpocket ingest chatgpt ./unzipped-chatgpt-export/
 ```
 
-Attachments/assets are ingested as attachment-aware records and reported during import.
-Raw export `.zip` files are ignored by git (`*.zip`) by default.
+Useful flags for targeted runs and debugging:
+
+```bash
+# cap how many conversations get processed (0 = no limit)
+frontpocket ingest chatgpt ./export --limit 50
+
+# scope to exactly one conversation by id (exact match, not substring)
+frontpocket ingest chatgpt ./export --conversation-id 6a3a89c7-bf88-83ea-a918-334e6e1e8801
+
+# substring match against conversation title or id
+frontpocket ingest chatgpt ./export --conversation "planning"
+
+# resolve attachment metadata (filenames/mime types) without spending on
+# any vision captioning API calls
+frontpocket ingest chatgpt ./export --no-caption
+
+# resume an interrupted import from a progress journal
+frontpocket ingest chatgpt ./export --resume data/progress.json
+```
+
+Attachments/assets are resolved against the export's `conversation_asset_file_names.json`
+and `library_files.json` mapping files, then embedded as real content:
+
+- Images get a real vision-model caption (see `VISION_MODEL` in `docs/providers.md`)
+  as their stored/searchable text.
+- Non-image attachments (PDF, audio, video, pasted text/markdown) get a
+  metadata-only description with no vision API call.
+- Unresolvable references fall back to a placeholder stub rather than
+  blocking the import.
+- `--dry-run` reports resolved/unresolved counts and how many attachments
+  would trigger a real vision call — always check this before a full run,
+  since captioning has real API cost at scale (a full ~1,700-image corpus
+  is a meaningfully sized bill, not a rounding error).
+- `is_starred`, `shared_conversations.json`, and `message_feedback.json`
+  signals (if present in the export) are captured as `user_starred`,
+  `user_shared`, `share_id`, `feedback_rating`, `feedback_note`, and
+  `feedback_at` on each point — also reported in the `--dry-run` summary.
+
+Raw export `.zip` files are ignored by git (`*.zip`) by default, and so is
+any folder you extract an export into (`unzipped/` and similarly-named
+folders) — never commit real chat history.
 If you hit an embedding JSON decode error on large imports, rebuild with `./make_all.sh` to pick up the latest embedding response handling.
 If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest to pick up UUID-compatible Qdrant point IDs (look for `not a valid point ID` in logs when using older binaries).
+As always: rebuild with `./make_all.sh` before testing ingest changes — running
+against a stale `bin/frontpocket` binary looks identical to a real bug.
 
 ## 12) Explore memory in the browser (MindDrill)
 

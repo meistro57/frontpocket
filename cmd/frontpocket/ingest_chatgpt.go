@@ -42,8 +42,11 @@ func runIngestChatGPT(args []string) error {
 	project := flags.String("project", "", "project label to attach to imported records")
 	since := flags.String("since", "", "only include messages at or after this date (YYYY-MM-DD or RFC3339)")
 	conversation := flags.String("conversation", "", "only include conversations whose title or id contains this value")
+	conversationID := flags.String("conversation-id", "", "only include the conversation with exactly this id (exact match, useful for targeted debugging)")
 	out := flags.String("out", "", "write normalized JSONL output to this path")
 	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
+	limit := flags.Int("limit", 0, "cap the number of conversations processed (0 = no limit)")
+	noCaption := flags.Bool("no-caption", false, "resolve attachment metadata but skip vision captioning API calls")
 
 	normalizedArgs, sourcePath := normalizeIngestChatGPTArgs(args)
 	if err := flags.Parse(normalizedArgs); err != nil {
@@ -58,7 +61,7 @@ func runIngestChatGPT(args []string) error {
 		positionals = append([]string{sourcePath}, positionals...)
 	}
 	if len(positionals) != 1 {
-		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--out <path>]")
+		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--limit <n>] [--no-caption]")
 	}
 
 	sinceTime, err := parseSince(*since)
@@ -78,11 +81,20 @@ func runIngestChatGPT(args []string) error {
 		}
 	}
 
+	var captioner memory.Captioner
+	if !*noCaption && cfgErr == nil {
+		captioner = buildCLICaptioner(cfg)
+	}
+
 	result, err := memory.ParseChatGPTExport(positionals[0], memory.ChatGPTImportOptions{
 		Project:            strings.TrimSpace(*project),
 		ConversationFilter: strings.TrimSpace(*conversation),
+		ConversationID:     strings.TrimSpace(*conversationID),
 		Since:              sinceTime,
 		SpeakerRules:       rules,
+		Limit:              *limit,
+		Captioner:          captioner,
+		DryRun:             *dryRun,
 	})
 	if err != nil {
 		return err
@@ -100,6 +112,7 @@ func runIngestChatGPT(args []string) error {
 	}
 
 	if *dryRun {
+		printDryRunSignalSummary(result)
 		fmt.Println("storage write: skipped (--dry-run)")
 		return nil
 	}
@@ -181,7 +194,7 @@ func printIngestHelp(output *os.File) {
 
 func printIngestChatGPTHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Usage:")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--out <path>] [--resume <path>]")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--limit <n>] [--no-caption]")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Command Reference:")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
@@ -223,6 +236,34 @@ func printImportSummary(result memory.ChatGPTImportResult) {
 		attachmentsIngested = "yes"
 	}
 	fmt.Printf("attachments ingested: %s\n", attachmentsIngested)
+	fmt.Printf("attachments captioned: %d (failed: %d)\n", result.AttachmentsCaptioned, result.AttachmentsCaptionFailed)
+}
+
+func printDryRunSignalSummary(result memory.ChatGPTImportResult) {
+	fmt.Printf("dry-run signals: starred=%d shared=%d feedback=%d (thumbs_up=%d, thumbs_down=%d)\n",
+		result.StarredConversations,
+		result.SharedConversations,
+		result.FeedbackConversations,
+		result.FeedbackThumbsUp,
+		result.FeedbackThumbsDown,
+	)
+	fmt.Printf("dry-run attachments: total=%d resolved_asset_files=%d resolved_library_files=%d unresolved=%d would_caption=%d\n",
+		result.AttachmentsTotal,
+		result.AttachmentsResolvedAssetFiles,
+		result.AttachmentsResolvedLibraryFiles,
+		result.AttachmentsUnresolved,
+		result.AttachmentsWouldCaption,
+	)
+}
+
+func buildCLICaptioner(cfg config.Config) memory.Captioner {
+	return memory.NewVisionCaptioner(
+		cfg.Embedding.OpenRouterURL,
+		cfg.Embedding.OpenRouterKey,
+		cfg.Vision.Model,
+		cfg.Embedding.OpenRouterSite,
+		cfg.Embedding.OpenRouterApp,
+	)
 }
 
 func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
@@ -248,7 +289,7 @@ func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
 
 		if strings.HasPrefix(trimmed, "--") {
 			normalized = append(normalized, trimmed)
-			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--out" {
+			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--out" || trimmed == "--resume" || trimmed == "--limit" {
 				expectsValue = true
 			}
 			continue
