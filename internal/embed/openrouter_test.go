@@ -67,6 +67,41 @@ func TestOpenRouterEmbedderDoesNotRetryNonZeroVectorErrors(t *testing.T) {
 	}
 }
 
+func TestOpenRouterEmbedderRetriesTimeoutError(t *testing.T) {
+	originalDelays := openRouterZeroVectorRetryDelays
+	openRouterZeroVectorRetryDelays = []time.Duration{0}
+	t.Cleanup(func() {
+		openRouterZeroVectorRetryDelays = originalDelays
+	})
+
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := atomic.AddInt32(&calls, 1)
+		if attempt == 1 {
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "embedding": []float64{0.1, 0.2, 0.3}}},
+		})
+	}))
+	defer srv.Close()
+
+	embedder := NewOpenRouterEmbedder(srv.URL, "google/gemini-embedding-2-preview", "test-key", "", "", 0)
+	embedder.client.Timeout = 10 * time.Millisecond
+
+	vectors, err := embedder.EmbedBatch(context.Background(), []string{"hello"})
+	if err != nil {
+		t.Fatalf("expected timeout retry to recover, got error: %v", err)
+	}
+	if len(vectors) != 1 {
+		t.Fatalf("expected 1 vector, got %d", len(vectors))
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("expected 2 calls, got %d", got)
+	}
+}
+
 func TestOpenRouterEmbedderFallsBackToSerialForBatchMismatch(t *testing.T) {
 	var batchCalls int32
 	var singleCalls int32

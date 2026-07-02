@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -79,6 +81,13 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 func isRetryableEmbeddingError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
 	}
 	message := strings.ToLower(err.Error())
 	retryable := []string{

@@ -203,6 +203,7 @@ func runIngestChatGPT(args []string) error {
 
 	var journal *memory.FileJournal
 	if path := strings.TrimSpace(*resume); path != "" {
+		logMissingResumeJournal(path)
 		j, resumed, err := memory.OpenFileJournal(path, memory.JournalMeta{
 			Source:         resolvedSourcePath,
 			Collection:     cfg.Qdrant.Collection,
@@ -390,6 +391,12 @@ func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
 	}
 
 	return normalized, sourcePath
+}
+
+func logMissingResumeJournal(path string) {
+	if _, err := os.Stat(path); err != nil && os.IsNotExist(err) {
+		fmt.Printf("resume: journal not found at %s; starting fresh\n", path)
+	}
 }
 
 func defaultCaptionCachePath(explicitPath, resumePath string) string {

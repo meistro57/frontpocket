@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ func runIngestClaude(args []string) error {
 	conversation := flags.String("conversation", "", "only include conversations whose title or id contains this value")
 	conversationID := flags.String("conversation-id", "", "only include the conversation with exactly this id")
 	limit := flags.Int("limit", 0, "cap the number of conversations processed (0 = no limit)")
+	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
 	aiProvider := flags.String("ai-provider", "claude", "AI provider label stored in memory payloads")
 
 	normalizedArgs, sourcePath := normalizeIngestClaudeArgs(args)
@@ -41,7 +43,7 @@ func runIngestClaude(args []string) error {
 		positionals = append([]string{sourcePath}, positionals...)
 	}
 	if len(positionals) != 1 {
-		return fmt.Errorf("usage: frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--ai-provider <name>]")
+		return fmt.Errorf("usage: frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--ai-provider <name>]")
 	}
 	if strings.TrimSpace(*aiProvider) == "" {
 		return fmt.Errorf("--ai-provider is required (example: --ai-provider claude)")
@@ -57,6 +59,11 @@ func runIngestClaude(args []string) error {
 			StoreUser:      cfg.Ingestion.StoreUserMessages,
 			StoreSystem:    cfg.Ingestion.StoreSystemMessages,
 		}
+	}
+
+	resolvedSourcePath, err := filepath.Abs(positionals[0])
+	if err != nil {
+		return err
 	}
 
 	result, err := memory.ParseClaudeExport(positionals[0], memory.ClaudeImportOptions{
@@ -108,6 +115,26 @@ func runIngestClaude(args []string) error {
 			ev.RecordsProcessed, ev.RecordsTotal, ev.ChunksEmbedded, elapsed, eta)
 	}
 
+	var journal *memory.FileJournal
+	if path := strings.TrimSpace(*resume); path != "" {
+		logMissingResumeJournal(path)
+		j, resumed, err := memory.OpenFileJournal(path, memory.JournalMeta{
+			Source:         resolvedSourcePath,
+			Collection:     cfg.Qdrant.Collection,
+			EmbeddingModel: ingestor.Embedder.ModelName(),
+		})
+		if err != nil {
+			return err
+		}
+		journal = j
+		ingestor.Journal = j
+		if resumed {
+			fmt.Printf("resume: continuing from record %d (journal %s)\n", j.LastRecordIndex()+1, path)
+		} else {
+			fmt.Printf("resume: tracking progress in %s\n", path)
+		}
+	}
+
 	integrityFilter := buildCLIIngestIntegrityFilter(strings.TrimSpace(result.SourceType), strings.TrimSpace(*project), strings.TrimSpace(*aiProvider))
 	baselineCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
 	if err != nil {
@@ -132,12 +159,17 @@ func runIngestClaude(args []string) error {
 		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", chunksEmbedded, actualAdded, strings.TrimSpace(*aiProvider), strings.TrimSpace(result.SourceType), strings.TrimSpace(*project))
 	}
 	fmt.Println("integrity check: match")
+	if journal != nil {
+		if err := journal.Remove(); err != nil {
+			fmt.Printf("resume: could not remove completed journal: %v\n", err)
+		}
+	}
 	return nil
 }
 
 func printIngestClaudeHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Usage:")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--ai-provider <name>]")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--ai-provider <name>]")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Command Reference:")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
@@ -168,7 +200,7 @@ func normalizeIngestClaudeArgs(args []string) ([]string, string) {
 		}
 		if strings.HasPrefix(trimmed, "--") {
 			normalized = append(normalized, trimmed)
-			if trimmed == "--project" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--limit" || trimmed == "--ai-provider" {
+			if trimmed == "--project" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--limit" || trimmed == "--resume" || trimmed == "--ai-provider" {
 				expectsValue = true
 			}
 			continue
