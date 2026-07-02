@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -237,6 +238,325 @@ func TestToQdrantPayloadIncludesMindDrillMetadata(t *testing.T) {
 	}
 	if payload["feedback_at"] != "2025-12-12T03:14:43Z" {
 		t.Fatalf("expected payload feedback_at value, got %v", payload["feedback_at"])
+	}
+}
+
+func TestUpsertRetriesTransientConnectionError(t *testing.T) {
+	originalDelays := qdrantWriteRetryDelays
+	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { qdrantWriteRetryDelays = originalDelays }()
+
+	attempts := 0
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
+			attempts++
+			if attempts == 1 {
+				hijacker, ok := w.(http.Hijacker)
+				if !ok {
+					t.Fatal("response writer does not support hijacking")
+				}
+				conn, _, err := hijacker.Hijack()
+				if err != nil {
+					t.Fatalf("hijack failed: %v", err)
+				}
+				_ = conn.Close()
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	err := memStore.Upsert(context.Background(), []memory.MemoryPoint{{
+		MemoryID:            "retry_test_memory",
+		ConversationID:      "conv_1",
+		SourceType:          "chat_export",
+		SourceTitle:         "Retry Test",
+		Timestamp:           time.Now().UTC(),
+		Speaker:             "user",
+		MemoryKind:          memory.KindProjectContext,
+		Text:                "hello",
+		SourceQuote:         "hello",
+		Summary:             "hello",
+		EmbeddingProvider:   "openrouter",
+		EmbeddingModel:      "openai/text-embedding-3-small",
+		EmbeddingDimensions: 4,
+		Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+	}})
+	if err != nil {
+		t.Fatalf("expected retry to recover transient error, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 upsert attempts, got %d", attempts)
+	}
+}
+
+func TestUpsertFailsAfterTransientRetriesExhausted(t *testing.T) {
+	originalDelays := qdrantWriteRetryDelays
+	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { qdrantWriteRetryDelays = originalDelays }()
+
+	attempts := 0
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
+			attempts++
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("response writer does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack failed: %v", err)
+			}
+			_ = conn.Close()
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	err := memStore.Upsert(context.Background(), []memory.MemoryPoint{{
+		MemoryID:            "retry_failure_test_memory",
+		ConversationID:      "conv_1",
+		SourceType:          "chat_export",
+		SourceTitle:         "Retry Failure Test",
+		Timestamp:           time.Now().UTC(),
+		Speaker:             "user",
+		MemoryKind:          memory.KindProjectContext,
+		Text:                "hello",
+		SourceQuote:         "hello",
+		Summary:             "hello",
+		EmbeddingProvider:   "openrouter",
+		EmbeddingModel:      "openai/text-embedding-3-small",
+		EmbeddingDimensions: 4,
+		Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+	}})
+	if err == nil {
+		t.Fatal("expected upsert error after retries were exhausted")
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 upsert attempts, got %d", attempts)
+	}
+}
+
+func TestUpsertDoesNotRetryStatusErrors(t *testing.T) {
+	originalDelays := qdrantWriteRetryDelays
+	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	defer func() { qdrantWriteRetryDelays = originalDelays }()
+
+	attempts := 0
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
+			attempts++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"status":"error","result":null}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	err := memStore.Upsert(context.Background(), []memory.MemoryPoint{{
+		MemoryID:            "status_failure_test_memory",
+		ConversationID:      "conv_1",
+		SourceType:          "chat_export",
+		SourceTitle:         "Status Failure Test",
+		Timestamp:           time.Now().UTC(),
+		Speaker:             "user",
+		MemoryKind:          memory.KindProjectContext,
+		Text:                "hello",
+		SourceQuote:         "hello",
+		Summary:             "hello",
+		EmbeddingProvider:   "openrouter",
+		EmbeddingModel:      "openai/text-embedding-3-small",
+		EmbeddingDimensions: 4,
+		Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+	}})
+	if err == nil {
+		t.Fatal("expected upsert error on qdrant status failure")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected no retries for status error, got %d attempts", attempts)
+	}
+}
+
+func TestUpsertSplitsLargePointCountIntoMultipleRequests(t *testing.T) {
+	requests := 0
+	totalPoints := 0
+	maxPointsInRequest := 0
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
+			requests++
+			var req struct {
+				Points []struct{} `json:"points"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("failed decoding qdrant upsert payload: %v", err)
+			}
+			if len(req.Points) > qdrantMaxUpsertPoints {
+				t.Fatalf("request exceeded point cap: got %d > %d", len(req.Points), qdrantMaxUpsertPoints)
+			}
+			totalPoints += len(req.Points)
+			if len(req.Points) > maxPointsInRequest {
+				maxPointsInRequest = len(req.Points)
+			}
+			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	points := make([]memory.MemoryPoint, 0, 300)
+	for idx := 0; idx < 300; idx++ {
+		points = append(points, memory.MemoryPoint{
+			MemoryID:            fmt.Sprintf("count_split_%03d", idx),
+			ConversationID:      "conv_1",
+			SourceType:          "chat_export",
+			SourceTitle:         "Count Split Test",
+			Timestamp:           time.Now().UTC(),
+			Speaker:             "user",
+			MemoryKind:          memory.KindProjectContext,
+			Text:                "hello",
+			SourceQuote:         "hello",
+			Summary:             "hello",
+			EmbeddingProvider:   "openrouter",
+			EmbeddingModel:      "openai/text-embedding-3-small",
+			EmbeddingDimensions: 4,
+			Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+		})
+	}
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	if err := memStore.Upsert(context.Background(), points); err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	if requests < 3 {
+		t.Fatalf("expected multiple requests for 300 points, got %d", requests)
+	}
+	if totalPoints != 300 {
+		t.Fatalf("expected 300 points upserted, got %d", totalPoints)
+	}
+	if maxPointsInRequest > qdrantMaxUpsertPoints {
+		t.Fatalf("max points per request exceeded cap: %d", maxPointsInRequest)
+	}
+}
+
+func TestUpsertSplitsByPayloadBytes(t *testing.T) {
+	requests := 0
+	requestSizes := make([]int, 0, 3)
+	pointsPerRequest := make([]int, 0, 3)
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
+			requests++
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed reading body: %v", err)
+			}
+			requestSizes = append(requestSizes, len(body))
+			var req struct {
+				Points []struct{} `json:"points"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("failed decoding payload: %v", err)
+			}
+			pointsPerRequest = append(pointsPerRequest, len(req.Points))
+			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	largeText := strings.Repeat("x", 11*1024*1024)
+	points := []memory.MemoryPoint{
+		{
+			MemoryID:            "bytes_split_1",
+			ConversationID:      "conv_1",
+			SourceType:          "chat_export",
+			SourceTitle:         "Bytes Split Test",
+			Timestamp:           time.Now().UTC(),
+			Speaker:             "user",
+			MemoryKind:          memory.KindProjectContext,
+			Text:                largeText,
+			SourceQuote:         "quote",
+			Summary:             "summary",
+			EmbeddingProvider:   "openrouter",
+			EmbeddingModel:      "openai/text-embedding-3-small",
+			EmbeddingDimensions: 4,
+			Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+		},
+		{
+			MemoryID:            "bytes_split_2",
+			ConversationID:      "conv_1",
+			SourceType:          "chat_export",
+			SourceTitle:         "Bytes Split Test",
+			Timestamp:           time.Now().UTC(),
+			Speaker:             "assistant",
+			MemoryKind:          memory.KindProjectContext,
+			Text:                largeText,
+			SourceQuote:         "quote",
+			Summary:             "summary",
+			EmbeddingProvider:   "openrouter",
+			EmbeddingModel:      "openai/text-embedding-3-small",
+			EmbeddingDimensions: 4,
+			Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+		},
+		{
+			MemoryID:            "bytes_split_3",
+			ConversationID:      "conv_1",
+			SourceType:          "chat_export",
+			SourceTitle:         "Bytes Split Test",
+			Timestamp:           time.Now().UTC(),
+			Speaker:             "user",
+			MemoryKind:          memory.KindProjectContext,
+			Text:                largeText,
+			SourceQuote:         "quote",
+			Summary:             "summary",
+			EmbeddingProvider:   "openrouter",
+			EmbeddingModel:      "openai/text-embedding-3-small",
+			EmbeddingDimensions: 4,
+			Vector:              []float32{0.1, 0.2, 0.3, 0.4},
+		},
+	}
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	if err := memStore.Upsert(context.Background(), points); err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	if requests < 2 {
+		t.Fatalf("expected payload byte split into multiple requests, got %d", requests)
+	}
+	for idx, size := range requestSizes {
+		if size > qdrantMaxUpsertPayloadBytes {
+			t.Fatalf("request %d payload size %d exceeds cap %d", idx, size, qdrantMaxUpsertPayloadBytes)
+		}
+	}
+	if len(pointsPerRequest) > 0 && pointsPerRequest[0] == len(points) {
+		t.Fatalf("expected first request to be split by bytes, got points per request=%v", pointsPerRequest)
 	}
 }
 

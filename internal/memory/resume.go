@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -46,13 +48,14 @@ type FileJournal struct {
 // a different import. The returned bool reports whether existing progress was
 // found (true) versus a fresh journal (false).
 func OpenFileJournal(path string, meta JournalMeta) (*FileJournal, bool, error) {
+	normalizedMeta := normalizeJournalMeta(meta)
 	j := &FileJournal{
 		path: path,
 		state: journalState{
 			Version:         journalVersion,
-			Source:          meta.Source,
-			Collection:      meta.Collection,
-			EmbeddingModel:  meta.EmbeddingModel,
+			Source:          normalizedMeta.Source,
+			Collection:      normalizedMeta.Collection,
+			EmbeddingModel:  normalizedMeta.EmbeddingModel,
 			LastRecordIndex: -1,
 		},
 	}
@@ -72,12 +75,21 @@ func OpenFileJournal(path string, meta JournalMeta) (*FileJournal, bool, error) 
 	if existing.Version != journalVersion {
 		return nil, false, fmt.Errorf("resume journal %s has unsupported version %d (want %d)", path, existing.Version, journalVersion)
 	}
-	if existing.Source != meta.Source || existing.Collection != meta.Collection || existing.EmbeddingModel != meta.EmbeddingModel {
+	normalizedExistingMeta := normalizeJournalMeta(JournalMeta{
+		Source:         existing.Source,
+		Collection:     existing.Collection,
+		EmbeddingModel: existing.EmbeddingModel,
+	})
+	if normalizedExistingMeta.Source != normalizedMeta.Source || normalizedExistingMeta.Collection != normalizedMeta.Collection || normalizedExistingMeta.EmbeddingModel != normalizedMeta.EmbeddingModel {
 		return nil, false, fmt.Errorf(
 			"resume journal %s is for a different import (source=%q collection=%q model=%q); delete it to start over",
 			path, existing.Source, existing.Collection, existing.EmbeddingModel,
 		)
 	}
+
+	existing.Source = normalizedExistingMeta.Source
+	existing.Collection = normalizedExistingMeta.Collection
+	existing.EmbeddingModel = normalizedExistingMeta.EmbeddingModel
 
 	j.state = existing
 	return j, true, nil
@@ -134,4 +146,21 @@ func (j *FileJournal) Remove() error {
 		return err
 	}
 	return nil
+}
+
+func normalizeJournalMeta(meta JournalMeta) JournalMeta {
+	normalized := JournalMeta{
+		Collection:     strings.TrimSpace(meta.Collection),
+		EmbeddingModel: strings.TrimSpace(meta.EmbeddingModel),
+	}
+	source := strings.TrimSpace(meta.Source)
+	if source == "" {
+		return normalized
+	}
+	if abs, err := filepath.Abs(source); err == nil {
+		normalized.Source = filepath.Clean(abs)
+		return normalized
+	}
+	normalized.Source = filepath.Clean(source)
+	return normalized
 }

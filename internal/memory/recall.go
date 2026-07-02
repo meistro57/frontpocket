@@ -109,6 +109,8 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 			MergedFrom:          append([]string(nil), p.MergedFrom...),
 			ApproximateDate:     p.ApproximateDate,
 			DateBasis:           p.DateBasis,
+			AIProvider:          p.AIProvider,
+			AIModel:             p.AIModel,
 		})
 	}
 

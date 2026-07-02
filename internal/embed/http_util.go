@@ -82,18 +82,7 @@ func isRetryableEmbeddingError(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	retryable := []string{
-		"status 408",
-		"status 429",
-		"status 500",
-		"status 502",
-		"status 503",
-		"status 504",
-		"timeout",
-		"deadline exceeded",
-		"unexpected end of json input",
-		"connection reset",
-		"connection refused",
-		"returned 0 vectors",
+		"openrouter returned 0 vectors",
 	}
 	for _, marker := range retryable {
 		if strings.Contains(message, marker) {

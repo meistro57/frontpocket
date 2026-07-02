@@ -12,13 +12,29 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/meistro57/frontpocket/internal/embed"
 	"github.com/meistro57/frontpocket/internal/memory"
 )
+
+var qdrantWriteRetryDelays = []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+
+const (
+	qdrantMaxUpsertPoints       = memory.DefaultUpsertBatchSize
+	qdrantMaxUpsertPayloadBytes = 24 << 20
+)
+
+type qdrantPoint struct {
+	ID      string         `json:"id"`
+	Vector  any            `json:"vector"`
+	Payload map[string]any `json:"payload"`
+}
 
 type QdrantClient struct {
 	baseURL        string
@@ -45,17 +61,54 @@ func (c *QdrantClient) Health(ctx context.Context) error {
 	return err
 }
 
+func (c *QdrantClient) CountPoints(ctx context.Context, collection string, payloadEquals map[string]string) (int, error) {
+	trimmedCollection := strings.TrimSpace(collection)
+	if trimmedCollection == "" {
+		return 0, fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+
+	body := map[string]any{"exact": true}
+	must := make([]map[string]any, 0, len(payloadEquals))
+	for key, value := range payloadEquals {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		must = append(must, map[string]any{
+			"key": strings.TrimSpace(key),
+			"match": map[string]any{
+				"value": strings.TrimSpace(value),
+			},
+		})
+	}
+	if len(must) > 0 {
+		body["filter"] = map[string]any{"must": must}
+	}
+
+	var response struct {
+		Result struct {
+			Count int `json:"count"`
+		} `json:"result"`
+	}
+	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/count", trimmedCollection), body, &response)
+	if err != nil {
+		return 0, err
+	}
+	return response.Result.Count, nil
+}
+
 func (c *QdrantClient) doJSON(ctx context.Context, method, path string, payload any, out any) (int, error) {
 	if c == nil || c.baseURL == "" {
 		return 0, fmt.Errorf("qdrant client is not configured")
 	}
 
 	var body io.Reader
+	var encoded []byte
 	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return 0, err
+		marshalPayload, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return 0, marshalErr
 		}
+		encoded = marshalPayload
 		body = bytes.NewReader(encoded)
 	}
 
@@ -65,6 +118,9 @@ func (c *QdrantClient) doJSON(ctx context.Context, method, path string, payload 
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+		if c.logger != nil && shouldLogQdrantPayloadBytes(method, path) {
+			c.logger.Warn("qdrant payload size", "method", method, "path", path, "bytes", len(encoded), "points", countPayloadPoints(payload))
+		}
 	}
 
 	callCtx := ctx
@@ -167,33 +223,20 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 		return err
 	}
 
-	type qdrantPoint struct {
-		ID      string         `json:"id"`
-		Vector  any            `json:"vector"`
-		Payload map[string]any `json:"payload"`
-	}
-
-	payload := struct {
-		Points []qdrantPoint `json:"points"`
-	}{
-		Points: make([]qdrantPoint, 0, len(points)),
-	}
-
+	qdrantPoints := make([]qdrantPoint, 0, len(points))
 	for _, point := range points {
 		vector := any(point.Vector)
 		if s.vectorName != "" {
 			vector = map[string][]float32{s.vectorName: point.Vector}
 		}
-
-		payload.Points = append(payload.Points, qdrantPoint{
+		qdrantPoints = append(qdrantPoints, qdrantPoint{
 			ID:      qdrantPointID(point.MemoryID),
 			Vector:  vector,
 			Payload: toQdrantPayload(point),
 		})
 	}
 
-	_, err := s.client.doJSON(ctx, http.MethodPut, fmt.Sprintf("/collections/%s/points?wait=true", s.collection), payload, nil)
-	if err != nil {
+	if err := s.upsertQdrantPointsInBatches(ctx, qdrantPoints); err != nil {
 		if s.fallback != nil {
 			if fallbackErr := s.fallback.Upsert(ctx, points); fallbackErr == nil {
 				return nil
@@ -206,6 +249,61 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 		_ = s.fallback.Upsert(ctx, points)
 	}
 	return nil
+}
+
+func (s *QdrantMemoryStore) upsertQdrantPointsInBatches(ctx context.Context, points []qdrantPoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+
+	endpoint := fmt.Sprintf("/collections/%s/points?wait=true", s.collection)
+	batch := make([]qdrantPoint, 0, qdrantMaxUpsertPoints)
+	batchBytes := 0
+
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		payload := struct {
+			Points []qdrantPoint `json:"points"`
+		}{
+			Points: batch,
+		}
+		_, err := s.client.doJSONWithTransientRetry(ctx, http.MethodPut, endpoint, payload, nil)
+		if err != nil {
+			return err
+		}
+		batch = batch[:0]
+		batchBytes = 0
+		return nil
+	}
+
+	for _, point := range points {
+		pointBytes, err := estimateQdrantPointJSONBytes(point)
+		if err != nil {
+			return err
+		}
+		if pointBytes > qdrantMaxUpsertPayloadBytes {
+			return fmt.Errorf("qdrant point payload %q is %d bytes, exceeding batch payload ceiling %d bytes", point.ID, pointBytes, qdrantMaxUpsertPayloadBytes)
+		}
+		if len(batch) >= qdrantMaxUpsertPoints || (len(batch) > 0 && batchBytes+pointBytes > qdrantMaxUpsertPayloadBytes) {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, point)
+		batchBytes += pointBytes
+	}
+
+	return flush()
+}
+
+func estimateQdrantPointJSONBytes(point qdrantPoint) (int, error) {
+	encoded, err := json.Marshal(point)
+	if err != nil {
+		return 0, err
+	}
+	return len(encoded) + 1, nil
 }
 
 func (s *QdrantMemoryStore) populateVectors(ctx context.Context, points []memory.MemoryPoint) error {
@@ -574,12 +672,127 @@ func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
+func (c *QdrantClient) doJSONWithTransientRetry(ctx context.Context, method, path string, payload any, out any) (int, error) {
+	status, err := c.doJSON(ctx, method, path, payload, out)
+	if err == nil {
+		return status, nil
+	}
+	if !isRetryableQdrantConnectionError(err) {
+		return status, err
+	}
+
+	lastErr := err
+	for attempt, delay := range qdrantWriteRetryDelays {
+		if waitErr := sleepWithContext(ctx, delay); waitErr != nil {
+			return status, waitErr
+		}
+		status, err = c.doJSON(ctx, method, path, payload, out)
+		if err == nil {
+			if c.logger != nil {
+				c.logger.Warn("qdrant request recovered after retry", "method", method, "path", path, "attempt", attempt+2)
+			}
+			return status, nil
+		}
+		lastErr = err
+		if !isRetryableQdrantConnectionError(err) {
+			break
+		}
+	}
+	return status, lastErr
+}
+
 func isTimeoutError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func shouldLogQdrantPayloadBytes(method, path string) bool {
+	if !strings.EqualFold(strings.TrimSpace(method), http.MethodPut) {
+		return false
+	}
+	trimmedPath := strings.TrimSpace(path)
+	if !strings.Contains(trimmedPath, "/points") {
+		return false
+	}
+	raw := strings.TrimSpace(os.Getenv("FRONTPOCKET_QDRANT_LOG_PAYLOAD_BYTES"))
+	if raw == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return enabled
+}
+
+func countPayloadPoints(payload any) int {
+	if payload == nil {
+		return 0
+	}
+	value := reflect.ValueOf(payload)
+	if !value.IsValid() {
+		return 0
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return 0
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return 0
+	}
+	field := value.FieldByName("Points")
+	if !field.IsValid() || field.Kind() != reflect.Slice {
+		return 0
+	}
+	return field.Len()
+}
+
+func isRetryableQdrantConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isTimeoutError(err) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	retryableMarkers := []string{
+		"broken pipe",
+		"connection reset by peer",
+		"connection refused",
+		"use of closed network connection",
+		"unexpected eof",
+	}
+	for _, marker := range retryableMarkers {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func toQdrantFilter(filters memory.SearchFilters) map[string]any {
@@ -655,6 +868,8 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 		"date_basis":               point.DateBasis,
 		"rejection_reason":         point.RejectionReason,
 		"merge_target_id":          point.MergeTargetID,
+		"ai_provider":              point.AIProvider,
+		"ai_model":                 point.AIModel,
 	}
 	if point.ReviewedAt != nil && !point.ReviewedAt.IsZero() {
 		payload["reviewed_at"] = point.ReviewedAt.Format(time.RFC3339)
@@ -694,6 +909,8 @@ func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResul
 		MergedFrom:          asStringSlice(payload["merged_from"]),
 		ApproximateDate:     asString(payload["approximate_date"]),
 		DateBasis:           asString(payload["date_basis"]),
+		AIProvider:          asString(payload["ai_provider"]),
+		AIModel:             asString(payload["ai_model"]),
 	}
 }
 

@@ -65,6 +65,8 @@ type MessageRecord struct {
 	AttachmentMimeType     string   `json:"attachment_mime_type,omitempty"`
 	AttachmentCategory     string   `json:"attachment_category,omitempty"`
 	AttachmentSourceSystem string   `json:"attachment_source_system,omitempty"`
+	AIProvider             string   `json:"ai_provider,omitempty"`
+	AIModel                string   `json:"ai_model,omitempty"`
 }
 
 type MemoryPoint struct {
@@ -110,6 +112,8 @@ type MemoryPoint struct {
 	DateBasis              string     `json:"date_basis,omitempty"`
 	RejectionReason        string     `json:"rejection_reason,omitempty"`
 	MergeTargetID          string     `json:"merge_target_id,omitempty"`
+	AIProvider             string     `json:"ai_provider,omitempty"`
+	AIModel                string     `json:"ai_model,omitempty"`
 	Vector                 []float32  `json:"-"`
 }
 
@@ -162,6 +166,8 @@ type SearchResult struct {
 	MergedFrom          []string   `json:"merged_from,omitempty"`
 	ApproximateDate     string     `json:"approximate_date,omitempty"`
 	DateBasis           string     `json:"date_basis,omitempty"`
+	AIProvider          string     `json:"ai_provider,omitempty"`
+	AIModel             string     `json:"ai_model,omitempty"`
 }
 
 type SearchResponse struct {

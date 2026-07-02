@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,10 +26,14 @@ func runIngestCommand(args []string) error {
 		printIngestHelp(os.Stdout)
 		return nil
 	}
-	if args[0] != "chatgpt" {
+	switch args[0] {
+	case "chatgpt":
+		return runIngestChatGPT(args[1:])
+	case "claude":
+		return runIngestClaude(args[1:])
+	default:
 		return fmt.Errorf("unsupported ingest source %q", args[0])
 	}
-	return runIngestChatGPT(args[1:])
 }
 
 func runIngestChatGPT(args []string) error {
@@ -45,8 +50,11 @@ func runIngestChatGPT(args []string) error {
 	conversationID := flags.String("conversation-id", "", "only include the conversation with exactly this id (exact match, useful for targeted debugging)")
 	out := flags.String("out", "", "write normalized JSONL output to this path")
 	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
+	captionCachePath := flags.String("caption-cache", "", "path to persistent attachment caption cache (defaults alongside --resume when set)")
+	parseCheckpointPath := flags.String("parse-checkpoint", "", "path to parse-phase conversation checkpoint file (defaults alongside --resume when set)")
 	limit := flags.Int("limit", 0, "cap the number of conversations processed (0 = no limit)")
 	noCaption := flags.Bool("no-caption", false, "resolve attachment metadata but skip vision captioning API calls")
+	aiProvider := flags.String("ai-provider", "", "AI provider label stored in memory payloads (required, e.g. chatgpt)")
 
 	normalizedArgs, sourcePath := normalizeIngestChatGPTArgs(args)
 	if err := flags.Parse(normalizedArgs); err != nil {
@@ -61,7 +69,10 @@ func runIngestChatGPT(args []string) error {
 		positionals = append([]string{sourcePath}, positionals...)
 	}
 	if len(positionals) != 1 {
-		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--limit <n>] [--no-caption]")
+		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--ai-provider <name>]")
+	}
+	if strings.TrimSpace(*aiProvider) == "" {
+		return fmt.Errorf("--ai-provider is required (example: --ai-provider chatgpt)")
 	}
 
 	sinceTime, err := parseSince(*since)
@@ -81,9 +92,45 @@ func runIngestChatGPT(args []string) error {
 		}
 	}
 
+	resolvedSourcePath, err := filepath.Abs(positionals[0])
+	if err != nil {
+		return err
+	}
+
 	var captioner memory.Captioner
 	if !*noCaption && cfgErr == nil {
 		captioner = buildCLICaptioner(cfg)
+		cachePath := defaultCaptionCachePath(strings.TrimSpace(*captionCachePath), strings.TrimSpace(*resume))
+		if cachePath != "" {
+			cache, cacheErr := memory.OpenCaptionCache(cachePath)
+			if cacheErr != nil {
+				return cacheErr
+			}
+			captioner = memory.NewCachingCaptioner(captioner, cache)
+			fmt.Printf("caption cache: %s (%d entries)\n", cachePath, cache.Count())
+		}
+	}
+
+	checkpointPath := defaultParseCheckpointPath(strings.TrimSpace(*parseCheckpointPath), strings.TrimSpace(*resume))
+	var parseCheckpoint *memory.ChatGPTParseCheckpoint
+	if checkpointPath != "" {
+		cp, resumed, cpErr := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+			Source:            resolvedSourcePath,
+			ConversationID:    strings.TrimSpace(*conversationID),
+			ConversationMatch: strings.TrimSpace(*conversation),
+			Since:             memory.ChatGPTParseCheckpointSinceValue(sinceTime),
+			Limit:             *limit,
+			CaptioningEnabled: captioner != nil && !*dryRun,
+		})
+		if cpErr != nil {
+			return cpErr
+		}
+		parseCheckpoint = cp
+		if resumed {
+			fmt.Printf("parse checkpoint: continuing with %d completed conversations (%s)\n", cp.DoneCount(), checkpointPath)
+		} else {
+			fmt.Printf("parse checkpoint: tracking conversation progress in %s\n", checkpointPath)
+		}
 	}
 
 	result, err := memory.ParseChatGPTExport(positionals[0], memory.ChatGPTImportOptions{
@@ -95,6 +142,8 @@ func runIngestChatGPT(args []string) error {
 		Limit:              *limit,
 		Captioner:          captioner,
 		DryRun:             *dryRun,
+		AIProvider:         strings.TrimSpace(*aiProvider),
+		ParseCheckpoint:    parseCheckpoint,
 	})
 	if err != nil {
 		return err
@@ -109,6 +158,9 @@ func runIngestChatGPT(args []string) error {
 	printImportSummary(result)
 	if strings.TrimSpace(*out) != "" {
 		fmt.Printf("normalized output: %s\n", strings.TrimSpace(*out))
+	}
+	if parseCheckpoint != nil {
+		fmt.Printf("parse checkpoint: skipped=%d newly_checkpointed=%d total_completed=%d\n", result.ConversationsSkippedByCheckpoint, result.ConversationsCheckpointed, parseCheckpoint.DoneCount())
 	}
 
 	if *dryRun {
@@ -127,13 +179,15 @@ func runIngestChatGPT(args []string) error {
 		return nil
 	}
 
-	ingestor, err := buildCLIIngestor(cfg)
+	ingestor, qdrantClient, err := buildCLIIngestor(cfg)
 	if err != nil {
 		fmt.Printf("storage write: not wired (%v)\n", err)
 		return nil
 	}
 
+	chunksEmbedded := 0
 	ingestor.ProgressFn = func(ev memory.ProgressEvent) {
+		chunksEmbedded = ev.ChunksEmbedded
 		elapsed := ev.Elapsed.Truncate(time.Second)
 		rate := 0.0
 		if ev.Elapsed.Seconds() > 0 {
@@ -150,7 +204,7 @@ func runIngestChatGPT(args []string) error {
 	var journal *memory.FileJournal
 	if path := strings.TrimSpace(*resume); path != "" {
 		j, resumed, err := memory.OpenFileJournal(path, memory.JournalMeta{
-			Source:         positionals[0],
+			Source:         resolvedSourcePath,
 			Collection:     cfg.Qdrant.Collection,
 			EmbeddingModel: ingestor.Embedder.ModelName(),
 		})
@@ -166,15 +220,43 @@ func runIngestChatGPT(args []string) error {
 		}
 	}
 
+	integritySourceType := strings.TrimSpace(result.SourceType)
+	if integritySourceType == "" {
+		integritySourceType = cfg.Ingestion.DefaultSourceType
+	}
+	integrityFilter := buildCLIIngestIntegrityFilter(integritySourceType, strings.TrimSpace(*project), strings.TrimSpace(*aiProvider))
+	baselineCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	if err != nil {
+		return fmt.Errorf("integrity check baseline failed: %w", err)
+	}
+
 	points, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
 	if err != nil {
 		return fmt.Errorf("parsed %d records but storage ingest failed: %w", len(result.Records), err)
 	}
 	fmt.Printf("storage write: inserted %d memory points\n", len(points))
+	if chunksEmbedded == 0 {
+		chunksEmbedded = len(points)
+	}
+	finalCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	if err != nil {
+		return fmt.Errorf("integrity check final count failed: %w", err)
+	}
+	actualAdded := finalCount - baselineCount
+	fmt.Printf("integrity check: baseline=%d final=%d expected_new=%d actual_new=%d\n", baselineCount, finalCount, chunksEmbedded, actualAdded)
+	if actualAdded != chunksEmbedded {
+		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", chunksEmbedded, actualAdded, strings.TrimSpace(*aiProvider), integritySourceType, strings.TrimSpace(*project))
+	}
+	fmt.Println("integrity check: match")
 
 	if journal != nil {
 		if err := journal.Remove(); err != nil {
 			fmt.Printf("resume: could not remove completed journal: %v\n", err)
+		}
+	}
+	if parseCheckpoint != nil {
+		if err := parseCheckpoint.Remove(); err != nil {
+			fmt.Printf("parse checkpoint: could not remove completed checkpoint: %v\n", err)
 		}
 	}
 	return nil
@@ -186,15 +268,17 @@ func printIngestHelp(output *os.File) {
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Subcommands:")
 	fmt.Fprintln(output, "  chatgpt      Import from a ChatGPT export zip or folder.")
+	fmt.Fprintln(output, "  claude       Import from a Claude export folder.")
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Help:")
 	fmt.Fprintln(output, "  frontpocket ingest --help")
 	fmt.Fprintln(output, "  frontpocket ingest chatgpt --help")
+	fmt.Fprintln(output, "  frontpocket ingest claude --help")
 }
 
 func printIngestChatGPTHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Usage:")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--limit <n>] [--no-caption]")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--ai-provider <name>]")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Command Reference:")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
@@ -237,6 +321,9 @@ func printImportSummary(result memory.ChatGPTImportResult) {
 	}
 	fmt.Printf("attachments ingested: %s\n", attachmentsIngested)
 	fmt.Printf("attachments captioned: %d (failed: %d)\n", result.AttachmentsCaptioned, result.AttachmentsCaptionFailed)
+	if result.CaptionCacheHits > 0 || result.CaptionCacheMisses > 0 || result.CaptionCacheWrites > 0 {
+		fmt.Printf("caption cache: hits=%d misses=%d writes=%d\n", result.CaptionCacheHits, result.CaptionCacheMisses, result.CaptionCacheWrites)
+	}
 }
 
 func printDryRunSignalSummary(result memory.ChatGPTImportResult) {
@@ -289,7 +376,7 @@ func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
 
 		if strings.HasPrefix(trimmed, "--") {
 			normalized = append(normalized, trimmed)
-			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--out" || trimmed == "--resume" || trimmed == "--limit" {
+			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--out" || trimmed == "--resume" || trimmed == "--caption-cache" || trimmed == "--parse-checkpoint" || trimmed == "--limit" || trimmed == "--ai-provider" {
 				expectsValue = true
 			}
 			continue
@@ -303,6 +390,26 @@ func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
 	}
 
 	return normalized, sourcePath
+}
+
+func defaultCaptionCachePath(explicitPath, resumePath string) string {
+	if strings.TrimSpace(explicitPath) != "" {
+		return strings.TrimSpace(explicitPath)
+	}
+	if strings.TrimSpace(resumePath) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(strings.TrimSpace(resumePath)), "caption_cache.json")
+}
+
+func defaultParseCheckpointPath(explicitPath, resumePath string) string {
+	if strings.TrimSpace(explicitPath) != "" {
+		return strings.TrimSpace(explicitPath)
+	}
+	if strings.TrimSpace(resumePath) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(strings.TrimSpace(resumePath)), "parse_checkpoint.json")
 }
 
 func parseSince(raw string) (time.Time, error) {
@@ -339,21 +446,20 @@ func envBool(key string, fallback bool) bool {
 	return value
 }
 
-func buildCLIIngestor(cfg config.Config) (memory.Ingestor, error) {
+func buildCLIIngestor(cfg config.Config) (memory.Ingestor, *store.QdrantClient, error) {
 	embedder, err := selectCLIEmbedder(cfg)
 	if err != nil {
-		return memory.Ingestor{}, err
+		return memory.Ingestor{}, nil, err
 	}
 
 	qdrant := store.NewQdrantClient(cfg.Qdrant.URL)
-	fallbackStore := memory.NewInMemoryStore()
 	memStore := store.NewQdrantMemoryStore(
 		qdrant,
 		embedder,
 		cfg.Qdrant.Collection,
 		cfg.Qdrant.VectorName,
 		cfg.Qdrant.Distance,
-		fallbackStore,
+		nil,
 	)
 
 	return memory.Ingestor{
@@ -371,7 +477,21 @@ func buildCLIIngestor(cfg config.Config) (memory.Ingestor, error) {
 			StoreUser:      cfg.Ingestion.StoreUserMessages,
 			StoreSystem:    cfg.Ingestion.StoreSystemMessages,
 		},
-	}, nil
+	}, qdrant, nil
+}
+
+func buildCLIIngestIntegrityFilter(sourceType, project, aiProvider string) map[string]string {
+	filter := map[string]string{}
+	if strings.TrimSpace(aiProvider) != "" {
+		filter["ai_provider"] = strings.TrimSpace(aiProvider)
+	}
+	if strings.TrimSpace(sourceType) != "" {
+		filter["source_type"] = strings.TrimSpace(sourceType)
+	}
+	if strings.TrimSpace(project) != "" {
+		filter["project"] = strings.TrimSpace(project)
+	}
+	return filter
 }
 
 func selectCLIEmbedder(cfg config.Config) (embed.Embedder, error) {

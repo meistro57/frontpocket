@@ -51,6 +51,8 @@ type Ingestor struct {
 	SourceTitle  string
 	Project      string
 	MemoryKind   string
+	AIProvider   string
+	AIModel      string
 	SpeakerRules SpeakerRules
 	ProgressFn   func(ProgressEvent)
 	// BatchSize controls how many points are upserted per store write. Points
@@ -216,6 +218,8 @@ func (i Ingestor) Ingest(ctx context.Context, records []MessageRecord) ([]Memory
 				AttachmentSourceSystem: rec.AttachmentSourceSystem,
 				MemoryKind:             defaultValue(rec.MemoryKind, defaultValue(i.MemoryKind, KindProjectContext)),
 				Text:                   chunk,
+				AIProvider:             defaultValue(rec.AIProvider, i.AIProvider),
+				AIModel:                defaultValue(rec.AIModel, i.AIModel),
 				SourceQuote:            clampQuote(chunk),
 				Summary:                summarize(chunk),
 				EmbeddingProvider:      i.Embedder.ProviderName(),

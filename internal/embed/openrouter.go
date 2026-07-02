@@ -9,10 +9,7 @@ import (
 	"time"
 )
 
-const (
-	openRouterMaxAttempts = 4
-	openRouterRetryDelay  = 400 * time.Millisecond
-)
+var openRouterZeroVectorRetryDelays = []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
 
 type OpenRouterEmbedder struct {
 	baseURL string
@@ -60,18 +57,24 @@ func (e *OpenRouterEmbedder) embedBatchWithRetry(ctx context.Context, texts []st
 		return [][]float32{}, nil
 	}
 
-	var lastErr error
-	for attempt := 1; attempt <= openRouterMaxAttempts; attempt++ {
-		vectors, err := e.embedBatchOnce(ctx, texts)
-		if err == nil {
-			return vectors, nil
-		}
-		lastErr = err
-		if !isRetryableEmbeddingError(err) || attempt == openRouterMaxAttempts {
-			break
-		}
-		if waitErr := sleepWithContext(ctx, time.Duration(attempt)*openRouterRetryDelay); waitErr != nil {
-			return nil, waitErr
+	vectors, err := e.embedBatchOnce(ctx, texts)
+	if err == nil {
+		return vectors, nil
+	}
+	lastErr := err
+	if isRetryableEmbeddingError(err) {
+		for _, delay := range openRouterZeroVectorRetryDelays {
+			if waitErr := sleepWithContext(ctx, delay); waitErr != nil {
+				return nil, waitErr
+			}
+			vectors, err = e.embedBatchOnce(ctx, texts)
+			if err == nil {
+				return vectors, nil
+			}
+			lastErr = err
+			if !isRetryableEmbeddingError(err) {
+				break
+			}
 		}
 	}
 

@@ -30,6 +30,8 @@ type NormalizedMemoryRecord struct {
 	Speaker                string            `json:"speaker"`
 	Role                   string            `json:"role"`
 	Project                string            `json:"project,omitempty"`
+	MemoryKind             string            `json:"memory_kind,omitempty"`
+	Tags                   []string          `json:"tags,omitempty"`
 	Text                   string            `json:"text"`
 	Metadata               map[string]string `json:"metadata,omitempty"`
 	UserStarred            bool              `json:"user_starred,omitempty"`
@@ -42,6 +44,8 @@ type NormalizedMemoryRecord struct {
 	AttachmentMimeType     string            `json:"attachment_mime_type,omitempty"`
 	AttachmentCategory     string            `json:"attachment_category,omitempty"`
 	AttachmentSourceSystem string            `json:"attachment_source_system,omitempty"`
+	AIProvider             string            `json:"ai_provider,omitempty"`
+	AIModel                string            `json:"ai_model,omitempty"`
 }
 
 type ChatGPTImportOptions struct {
@@ -67,33 +71,43 @@ type ChatGPTImportOptions struct {
 	// files (so AttachmentsWouldCaption is accurate) but never actually
 	// invokes Captioner, so a dry run never spends on vision API calls.
 	DryRun bool
+	// AIProvider identifies the assistant source (for example, chatgpt).
+	AIProvider string
+	// ParseCheckpoint persists per-conversation parse progress so an interrupted
+	// parse+caption phase can skip already-processed conversations.
+	ParseCheckpoint *ChatGPTParseCheckpoint
 }
 
 type ChatGPTImportResult struct {
-	SourcePath                      string
-	ImportID                        string
-	ConversationsFound              int
-	MessagesFound                   int
-	MessagesAccepted                int
-	MessagesSkipped                 int
-	RolesFound                      []string
-	UnsupportedContentTypes         map[string]int
-	AttachmentsAssetsDetected       int
-	AttachmentsIngested             bool
-	StarredConversations            int
-	SharedConversations             int
-	FeedbackConversations           int
-	FeedbackThumbsUp                int
-	FeedbackThumbsDown              int
-	AttachmentsTotal                int
-	AttachmentsResolvedAssetFiles   int
-	AttachmentsResolvedLibraryFiles int
-	AttachmentsUnresolved           int
-	AttachmentsWouldCaption         int
-	AttachmentsCaptioned            int
-	AttachmentsCaptionFailed        int
-	SourceType                      string
-	Records                         []NormalizedMemoryRecord
+	SourcePath                       string
+	ImportID                         string
+	ConversationsFound               int
+	ConversationsSkippedByCheckpoint int
+	ConversationsCheckpointed        int
+	MessagesFound                    int
+	MessagesAccepted                 int
+	MessagesSkipped                  int
+	RolesFound                       []string
+	UnsupportedContentTypes          map[string]int
+	AttachmentsAssetsDetected        int
+	AttachmentsIngested              bool
+	StarredConversations             int
+	SharedConversations              int
+	FeedbackConversations            int
+	FeedbackThumbsUp                 int
+	FeedbackThumbsDown               int
+	AttachmentsTotal                 int
+	AttachmentsResolvedAssetFiles    int
+	AttachmentsResolvedLibraryFiles  int
+	AttachmentsUnresolved            int
+	AttachmentsWouldCaption          int
+	AttachmentsCaptioned             int
+	AttachmentsCaptionFailed         int
+	CaptionCacheHits                 int
+	CaptionCacheMisses               int
+	CaptionCacheWrites               int
+	SourceType                       string
+	Records                          []NormalizedMemoryRecord
 }
 
 type chatGPTSource struct {
@@ -116,6 +130,7 @@ type chatGPTNode struct {
 	AttachmentRefs []string
 	SupportedText  bool
 	HasText        bool
+	ModelSlug      string
 }
 
 type ShareSignal struct {
@@ -234,6 +249,10 @@ fileLoop:
 				}
 			}
 			result.ConversationsFound++
+			if options.ParseCheckpoint != nil && options.ParseCheckpoint.IsDone(conversationID) {
+				result.ConversationsSkippedByCheckpoint++
+				continue
+			}
 
 			conversationCreate := normalizeTimeString(conversation["create_time"])
 			conversationUpdate := normalizeTimeString(conversation["update_time"])
@@ -307,6 +326,9 @@ fileLoop:
 				if node.MessageUpdate != "" {
 					metadata["message_update_time"] = node.MessageUpdate
 				}
+				if node.ModelSlug != "" {
+					metadata["model_slug"] = node.ModelSlug
+				}
 				if len(node.AttachmentRefs) > 0 {
 					metadata["attachment_refs"] = strings.Join(node.AttachmentRefs, ",")
 					metadata["attachment_count"] = strconv.Itoa(len(node.AttachmentRefs))
@@ -338,6 +360,7 @@ fileLoop:
 					Speaker:           node.Role,
 					Role:              node.Role,
 					Project:           strings.TrimSpace(options.Project),
+					MemoryKind:        KindChatTurn,
 					Text:              nodeText,
 					Metadata:          metadata,
 					UserStarred:       userStarred,
@@ -346,6 +369,8 @@ fileLoop:
 					FeedbackRating:    feedbackSignal.Rating,
 					FeedbackNote:      feedbackSignal.Note,
 					FeedbackAt:        feedbackSignal.At,
+					AIProvider:        strings.TrimSpace(options.AIProvider),
+					AIModel:           node.ModelSlug,
 				}
 				if chosenAttachment != nil {
 					record.AttachmentFilename = chosenAttachment.Filename
@@ -360,6 +385,12 @@ fileLoop:
 				}
 				result.MessagesAccepted++
 			}
+			if options.ParseCheckpoint != nil {
+				if err := options.ParseCheckpoint.MarkDone(conversationID); err != nil {
+					return ChatGPTImportResult{}, err
+				}
+				result.ConversationsCheckpointed++
+			}
 		}
 	}
 
@@ -372,6 +403,12 @@ fileLoop:
 
 	if len(result.UnsupportedContentTypes) == 0 {
 		result.UnsupportedContentTypes = map[string]int{}
+	}
+	if cacheStatsProvider, ok := options.Captioner.(interface{ CaptionCacheStats() CaptionCacheStats }); ok {
+		stats := cacheStatsProvider.CaptionCacheStats()
+		result.CaptionCacheHits = stats.Hits
+		result.CaptionCacheMisses = stats.Misses
+		result.CaptionCacheWrites = stats.Writes
 	}
 
 	return result, nil
@@ -503,6 +540,8 @@ func ToMessageRecords(records []NormalizedMemoryRecord) []MessageRecord {
 			SourceType:             record.SourceType,
 			SourceTitle:            record.ConversationTitle,
 			Project:                record.Project,
+			MemoryKind:             record.MemoryKind,
+			Tags:                   append([]string(nil), record.Tags...),
 			UserStarred:            record.UserStarred,
 			UserShared:             record.UserShared,
 			ShareID:                record.ShareID,
@@ -513,6 +552,8 @@ func ToMessageRecords(records []NormalizedMemoryRecord) []MessageRecord {
 			AttachmentMimeType:     record.AttachmentMimeType,
 			AttachmentCategory:     record.AttachmentCategory,
 			AttachmentSourceSystem: record.AttachmentSourceSystem,
+			AIProvider:             record.AIProvider,
+			AIModel:                record.AIModel,
 		})
 	}
 	return out
@@ -751,6 +792,8 @@ func collectMessageNodes(conversation map[string]any) []chatGPTNode {
 
 		messageCreate := normalizeTimeString(messageMap["create_time"])
 		messageUpdate := normalizeTimeString(messageMap["update_time"])
+		messageMetadata, _ := messageMap["metadata"].(map[string]any)
+		modelSlug := strings.TrimSpace(stringValue(messageMetadata["model_slug"]))
 
 		messageTime := parseTimeValue(messageMap["create_time"])
 		if messageTime.IsZero() {
@@ -774,6 +817,7 @@ func collectMessageNodes(conversation map[string]any) []chatGPTNode {
 			AttachmentRefs: attachmentRefs,
 			SupportedText:  supported,
 			HasText:        hasText,
+			ModelSlug:      modelSlug,
 		})
 	}
 

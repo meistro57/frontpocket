@@ -631,6 +631,144 @@ func TestParseChatGPTExportLimitCapsConversations(t *testing.T) {
 	}
 }
 
+func TestParseChatGPTExportCaptionCacheAvoidsSecondVisionCall(t *testing.T) {
+	folder := t.TempDir()
+	payload := []map[string]any{
+		{
+			"id":    "conv-cache",
+			"title": "Caption Cache",
+			"mapping": map[string]any{
+				"n1": map[string]any{
+					"id": "n1",
+					"message": map[string]any{
+						"id":     "m1",
+						"author": map[string]any{"role": "user"},
+						"content": map[string]any{
+							"content_type": "multimodal_text",
+							"parts": []any{
+								map[string]any{
+									"asset_pointer": "file-service://file-abc123",
+									"content_type":  "image_asset_pointer",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	writeConversationsJSON(t, folder, payload)
+	writeAssetFileNamesJSON(t, folder, map[string]string{
+		"file-abc123.dat": "photo.png",
+	})
+	if err := os.WriteFile(filepath.Join(folder, "file-abc123.dat"), []byte("identical-bytes"), 0o644); err != nil {
+		t.Fatalf("failed writing dat file: %v", err)
+	}
+
+	cachePath := filepath.Join(folder, "caption_cache.json")
+	cache, err := memory.OpenCaptionCache(cachePath)
+	if err != nil {
+		t.Fatalf("open caption cache: %v", err)
+	}
+	firstUnderlying := &fakeCaptioner{response: "cached image caption"}
+	firstResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Captioner:    memory.NewCachingCaptioner(firstUnderlying, cache),
+	})
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+	if len(firstUnderlying.calls) != 1 {
+		t.Fatalf("expected exactly 1 vision call on first parse, got %d", len(firstUnderlying.calls))
+	}
+	if firstResult.CaptionCacheMisses != 1 || firstResult.CaptionCacheWrites != 1 || firstResult.CaptionCacheHits != 0 {
+		t.Fatalf("unexpected first-run cache stats: hits=%d misses=%d writes=%d", firstResult.CaptionCacheHits, firstResult.CaptionCacheMisses, firstResult.CaptionCacheWrites)
+	}
+
+	cacheReloaded, err := memory.OpenCaptionCache(cachePath)
+	if err != nil {
+		t.Fatalf("reopen caption cache: %v", err)
+	}
+	secondUnderlying := &fakeCaptioner{response: "should not be used"}
+	secondResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Captioner:    memory.NewCachingCaptioner(secondUnderlying, cacheReloaded),
+	})
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+	if len(secondUnderlying.calls) != 0 {
+		t.Fatalf("expected 0 vision calls on second parse due to cache hit, got %d", len(secondUnderlying.calls))
+	}
+	if secondResult.CaptionCacheHits != 1 || secondResult.CaptionCacheMisses != 0 {
+		t.Fatalf("unexpected second-run cache stats: hits=%d misses=%d", secondResult.CaptionCacheHits, secondResult.CaptionCacheMisses)
+	}
+	if secondResult.Records[0].Text != "cached image caption" {
+		t.Fatalf("expected cached caption text to be reused, got %q", secondResult.Records[0].Text)
+	}
+}
+
+func TestParseChatGPTExportCheckpointSkipsCompletedConversations(t *testing.T) {
+	folder := t.TempDir()
+	payload := []map[string]any{
+		conversationWithSingleTextMessage("conv-1", "first"),
+		conversationWithSingleTextMessage("conv-2", "second"),
+	}
+	writeConversationsJSON(t, folder, payload)
+
+	checkpointPath := filepath.Join(folder, "parse_checkpoint.json")
+	checkpoint, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: false,
+	})
+	if err != nil {
+		t.Fatalf("open parse checkpoint: %v", err)
+	}
+	if resumed {
+		t.Fatalf("expected fresh parse checkpoint")
+	}
+
+	firstResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Limit:           1,
+		ParseCheckpoint: checkpoint,
+	})
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+	if firstResult.ConversationsCheckpointed != 1 {
+		t.Fatalf("expected 1 conversation checkpointed on first run, got %d", firstResult.ConversationsCheckpointed)
+	}
+
+	reopened, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: false,
+	})
+	if err != nil {
+		t.Fatalf("reopen parse checkpoint: %v", err)
+	}
+	if !resumed {
+		t.Fatalf("expected parse checkpoint resume")
+	}
+
+	secondResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		ParseCheckpoint: reopened,
+	})
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+	if secondResult.ConversationsSkippedByCheckpoint != 1 {
+		t.Fatalf("expected 1 skipped conversation from checkpoint, got %d", secondResult.ConversationsSkippedByCheckpoint)
+	}
+	if len(secondResult.Records) != 1 {
+		t.Fatalf("expected only 1 new conversation record after resume, got %d", len(secondResult.Records))
+	}
+	if secondResult.Records[0].ConversationID != "conv-2" {
+		t.Fatalf("expected remaining conversation conv-2, got %q", secondResult.Records[0].ConversationID)
+	}
+}
+
 func TestCaptionImageReturnsErrorWhenUnconfigured(t *testing.T) {
 	captioner := memory.NewVisionCaptioner("", "", "", "", "")
 	_, err := captioner.CaptionImage(context.Background(), memory.ResolvedAttachment{
