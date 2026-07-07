@@ -249,9 +249,9 @@ fileLoop:
 				}
 			}
 			result.ConversationsFound++
-			if options.ParseCheckpoint != nil && options.ParseCheckpoint.IsDone(conversationID) {
+			conversationAlreadyCheckpointed := options.ParseCheckpoint != nil && options.ParseCheckpoint.IsDone(conversationID)
+			if conversationAlreadyCheckpointed {
 				result.ConversationsSkippedByCheckpoint++
-				continue
 			}
 
 			conversationCreate := normalizeTimeString(conversation["create_time"])
@@ -385,7 +385,7 @@ fileLoop:
 				}
 				result.MessagesAccepted++
 			}
-			if options.ParseCheckpoint != nil {
+			if options.ParseCheckpoint != nil && !conversationAlreadyCheckpointed {
 				if err := options.ParseCheckpoint.MarkDone(conversationID); err != nil {
 					return ChatGPTImportResult{}, err
 				}

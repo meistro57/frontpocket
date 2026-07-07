@@ -89,8 +89,14 @@ func (c *QdrantClient) CountPoints(ctx context.Context, collection string, paylo
 			Count int `json:"count"`
 		} `json:"result"`
 	}
-	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/count", trimmedCollection), body, &response)
+	status, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/count", trimmedCollection), body, &response)
 	if err != nil {
+		if status == http.StatusNotFound {
+			// Collection doesn't exist yet — a perfectly valid starting point
+			// (a genuinely fresh ingest, or a just-wiped collection), not a
+			// real failure. Zero points is the correct, honest baseline.
+			return 0, nil
+		}
 		return 0, err
 	}
 	return response.Result.Count, nil

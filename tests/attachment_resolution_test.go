@@ -35,6 +35,23 @@ func (f *fakeCaptioner) CaptionImage(ctx context.Context, attachment memory.Reso
 	return "a real caption describing the image", nil
 }
 
+type checkpointResumeEmbedder struct{}
+
+func (checkpointResumeEmbedder) EmbedText(_ context.Context, _ string) ([]float32, error) {
+	return []float32{0.1, 0.2, 0.3, 0.4}, nil
+}
+
+func (checkpointResumeEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for range texts {
+		out = append(out, []float32{0.1, 0.2, 0.3, 0.4})
+	}
+	return out, nil
+}
+
+func (checkpointResumeEmbedder) ProviderName() string { return "stub" }
+func (checkpointResumeEmbedder) ModelName() string    { return "stub-model" }
+
 func writeAssetFileNamesJSON(t *testing.T, dir string, payload any) {
 	t.Helper()
 	writeJSONFile(t, filepath.Join(dir, "conversation_asset_file_names.json"), payload)
@@ -708,6 +725,114 @@ func TestParseChatGPTExportCaptionCacheAvoidsSecondVisionCall(t *testing.T) {
 	}
 }
 
+func TestParseChatGPTExportCheckpointedConversationReusesCaptionCache(t *testing.T) {
+	folder := t.TempDir()
+	payload := []map[string]any{
+		{
+			"id":    "conv-cache-checkpoint",
+			"title": "Caption Cache Checkpoint",
+			"mapping": map[string]any{
+				"n1": map[string]any{
+					"id": "n1",
+					"message": map[string]any{
+						"id":     "m1",
+						"author": map[string]any{"role": "user"},
+						"content": map[string]any{
+							"content_type": "multimodal_text",
+							"parts": []any{
+								map[string]any{
+									"asset_pointer": "file-service://file-abc123",
+									"content_type":  "image_asset_pointer",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	writeConversationsJSON(t, folder, payload)
+	writeAssetFileNamesJSON(t, folder, map[string]string{
+		"file-abc123.dat": "photo.png",
+	})
+	if err := os.WriteFile(filepath.Join(folder, "file-abc123.dat"), []byte("identical-bytes"), 0o644); err != nil {
+		t.Fatalf("failed writing dat file: %v", err)
+	}
+
+	cachePath := filepath.Join(folder, "caption_cache.json")
+	cache, err := memory.OpenCaptionCache(cachePath)
+	if err != nil {
+		t.Fatalf("open caption cache: %v", err)
+	}
+	checkpointPath := filepath.Join(folder, "parse_checkpoint.json")
+	checkpoint, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("open parse checkpoint: %v", err)
+	}
+	if resumed {
+		t.Fatalf("expected fresh parse checkpoint")
+	}
+
+	firstUnderlying := &fakeCaptioner{response: "cached image caption"}
+	firstResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Captioner:       memory.NewCachingCaptioner(firstUnderlying, cache),
+		ParseCheckpoint: checkpoint,
+	})
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+	if len(firstUnderlying.calls) != 1 {
+		t.Fatalf("expected exactly 1 vision call on first parse, got %d", len(firstUnderlying.calls))
+	}
+	if firstResult.ConversationsCheckpointed != 1 {
+		t.Fatalf("expected first parse to checkpoint 1 conversation, got %d", firstResult.ConversationsCheckpointed)
+	}
+
+	cacheReloaded, err := memory.OpenCaptionCache(cachePath)
+	if err != nil {
+		t.Fatalf("reopen caption cache: %v", err)
+	}
+	reopenedCheckpoint, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("reopen parse checkpoint: %v", err)
+	}
+	if !resumed {
+		t.Fatalf("expected parse checkpoint resume")
+	}
+
+	secondUnderlying := &fakeCaptioner{response: "should not be used"}
+	secondResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Captioner:       memory.NewCachingCaptioner(secondUnderlying, cacheReloaded),
+		ParseCheckpoint: reopenedCheckpoint,
+	})
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+	if secondResult.ConversationsSkippedByCheckpoint != 1 {
+		t.Fatalf("expected checkpoint skip counter to increment, got %d", secondResult.ConversationsSkippedByCheckpoint)
+	}
+	if secondResult.MessagesAccepted != 1 || len(secondResult.Records) != 1 {
+		t.Fatalf("expected checkpointed resume to still emit 1 record, got accepted=%d records=%d", secondResult.MessagesAccepted, len(secondResult.Records))
+	}
+	if len(secondUnderlying.calls) != 0 {
+		t.Fatalf("expected 0 vision calls on checkpointed resume due to caption cache hit, got %d", len(secondUnderlying.calls))
+	}
+	if secondResult.CaptionCacheHits != 1 {
+		t.Fatalf("expected caption cache hit on checkpointed resume, got %d", secondResult.CaptionCacheHits)
+	}
+	if secondResult.Records[0].Text != "cached image caption" {
+		t.Fatalf("expected cached caption text to be reused, got %q", secondResult.Records[0].Text)
+	}
+}
+
 func TestParseChatGPTExportCheckpointSkipsCompletedConversations(t *testing.T) {
 	folder := t.TempDir()
 	payload := []map[string]any{
@@ -761,11 +886,117 @@ func TestParseChatGPTExportCheckpointSkipsCompletedConversations(t *testing.T) {
 	if secondResult.ConversationsSkippedByCheckpoint != 1 {
 		t.Fatalf("expected 1 skipped conversation from checkpoint, got %d", secondResult.ConversationsSkippedByCheckpoint)
 	}
-	if len(secondResult.Records) != 1 {
-		t.Fatalf("expected only 1 new conversation record after resume, got %d", len(secondResult.Records))
+	if len(secondResult.Records) != 2 {
+		t.Fatalf("expected resumed parse to still emit both conversation records, got %d", len(secondResult.Records))
 	}
-	if secondResult.Records[0].ConversationID != "conv-2" {
-		t.Fatalf("expected remaining conversation conv-2, got %q", secondResult.Records[0].ConversationID)
+	if secondResult.Records[0].ConversationID != "conv-1" || secondResult.Records[1].ConversationID != "conv-2" {
+		t.Fatalf("expected records for conv-1 and conv-2, got %q and %q", secondResult.Records[0].ConversationID, secondResult.Records[1].ConversationID)
+	}
+}
+
+func TestParseChatGPTExportCheckpointedConversationsStillFeedResumeJournal(t *testing.T) {
+	folder := t.TempDir()
+	payload := []map[string]any{
+		conversationWithSingleTextMessage("conv-1", "first"),
+		conversationWithSingleTextMessage("conv-2", "second"),
+	}
+	writeConversationsJSON(t, folder, payload)
+
+	checkpointPath := filepath.Join(folder, "parse_checkpoint.json")
+	checkpoint, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: false,
+	})
+	if err != nil {
+		t.Fatalf("open parse checkpoint: %v", err)
+	}
+	if resumed {
+		t.Fatalf("expected fresh parse checkpoint")
+	}
+
+	initialResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		ParseCheckpoint: checkpoint,
+	})
+	if err != nil {
+		t.Fatalf("initial parse failed: %v", err)
+	}
+	if initialResult.ConversationsCheckpointed != 2 {
+		t.Fatalf("expected both conversations checkpointed, got %d", initialResult.ConversationsCheckpointed)
+	}
+
+	sourceAbs, err := filepath.Abs(folder)
+	if err != nil {
+		t.Fatalf("abs source path: %v", err)
+	}
+	journalPath := filepath.Join(folder, "ingest_progress.json")
+	journal, resumed, err := memory.OpenFileJournal(journalPath, memory.JournalMeta{
+		Source:         sourceAbs,
+		Collection:     "frontpocket_memory",
+		EmbeddingModel: "stub-model",
+	})
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	if resumed {
+		t.Fatalf("expected fresh journal")
+	}
+	if err := journal.Commit(memory.Checkpoint{LastRecordIndex: 0, TotalRecords: 2, ChunksEmbedded: 1}); err != nil {
+		t.Fatalf("commit journal checkpoint: %v", err)
+	}
+
+	reopenedCheckpoint, resumed, err := memory.OpenChatGPTParseCheckpoint(checkpointPath, memory.ChatGPTParseCheckpointMeta{
+		Source:            folder,
+		CaptioningEnabled: false,
+	})
+	if err != nil {
+		t.Fatalf("reopen parse checkpoint: %v", err)
+	}
+	if !resumed {
+		t.Fatalf("expected parse checkpoint resume")
+	}
+	reopenedJournal, resumed, err := memory.OpenFileJournal(journalPath, memory.JournalMeta{
+		Source:         sourceAbs,
+		Collection:     "frontpocket_memory",
+		EmbeddingModel: "stub-model",
+	})
+	if err != nil {
+		t.Fatalf("reopen journal: %v", err)
+	}
+	if !resumed {
+		t.Fatalf("expected journal resume")
+	}
+
+	resumedResult, err := memory.ParseChatGPTExport(folder, memory.ChatGPTImportOptions{
+		SpeakerRules:    memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		ParseCheckpoint: reopenedCheckpoint,
+	})
+	if err != nil {
+		t.Fatalf("resumed parse failed: %v", err)
+	}
+	if resumedResult.ConversationsSkippedByCheckpoint != 2 {
+		t.Fatalf("expected both conversations marked as checkpoint-skipped, got %d", resumedResult.ConversationsSkippedByCheckpoint)
+	}
+	if resumedResult.MessagesAccepted != 2 {
+		t.Fatalf("expected resumed parse to emit both message records, got %d", resumedResult.MessagesAccepted)
+	}
+
+	ingestor := memory.Ingestor{
+		Chunker:      memory.Chunker{Size: 1000, Overlap: 0, MinSize: 1},
+		Embedder:     checkpointResumeEmbedder{},
+		Store:        memory.NewInMemoryStore(),
+		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
+		Journal:      reopenedJournal,
+	}
+	inserted, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(resumedResult.Records))
+	if err != nil {
+		t.Fatalf("resume ingest failed: %v", err)
+	}
+	if len(inserted) != 1 {
+		t.Fatalf("expected only one remaining record to ingest after journal resume, got %d", len(inserted))
+	}
+	if reopenedJournal.LastRecordIndex() != 1 {
+		t.Fatalf("expected journal to advance to final record index 1, got %d", reopenedJournal.LastRecordIndex())
 	}
 }
 
