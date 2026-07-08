@@ -81,12 +81,17 @@ func TestMemoryStatsEndpoint(t *testing.T) {
 		SourceTitle: "Stats Test Chat",
 		Records: []memory.MessageRecord{
 			{
-				ConversationID: "conv_1",
-				Timestamp:      "2026-06-22T11:13:00Z",
-				Speaker:        "user",
-				Project:        "FrontPocket",
-				MemoryKind:     memory.KindProjectContext,
-				Text:           "FrontPocket is source-backed and local-first.",
+				ConversationID:         "conv_1",
+				Timestamp:              "2026-06-22T11:13:00Z",
+				Speaker:                "user",
+				Project:                "FrontPocket",
+				MemoryKind:             memory.KindProjectContext,
+				AIProvider:             "chatgpt",
+				AIModel:                "gpt-4o",
+				UserStarred:            true,
+				FeedbackRating:         "thumbs_down",
+				AttachmentSourceSystem: "chatgpt_export",
+				Text:                   "FrontPocket is source-backed and local-first.",
 			},
 			{
 				ConversationID: "conv_1",
@@ -94,6 +99,9 @@ func TestMemoryStatsEndpoint(t *testing.T) {
 				Speaker:        "assistant",
 				Project:        "FrontPocket",
 				MemoryKind:     memory.KindTechnicalSolution,
+				AIProvider:     "chatgpt",
+				AIModel:        "gpt-4o-mini",
+				UserShared:     true,
 				Text:           "Redis is used for fast recall caching.",
 			},
 			{
@@ -102,6 +110,8 @@ func TestMemoryStatsEndpoint(t *testing.T) {
 				Speaker:        "user",
 				Project:        "Notebook",
 				MemoryKind:     memory.KindResearchNote,
+				AIProvider:     "claude",
+				AIModel:        "claude-3-5-sonnet",
 				Text:           "Keep retrieval source-backed.",
 			},
 		},
@@ -165,5 +175,69 @@ func TestMemoryStatsEndpoint(t *testing.T) {
 	}
 	if filtered.ByProject["FrontPocket"] != 2 {
 		t.Fatalf("expected FrontPocket project count 2, got %#v", filtered.ByProject)
+	}
+
+	providerResp, err := http.Get(testServer.URL + "/memory/stats?ai_provider=chatgpt")
+	if err != nil {
+		t.Fatalf("provider-filtered stats request failed: %v", err)
+	}
+	defer providerResp.Body.Close()
+	if providerResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from provider-filtered stats, got %d", providerResp.StatusCode)
+	}
+	var providerFiltered memory.MemoryStats
+	if err := json.NewDecoder(providerResp.Body).Decode(&providerFiltered); err != nil {
+		t.Fatalf("decoding provider-filtered stats response failed: %v", err)
+	}
+	if providerFiltered.Total != 2 {
+		t.Fatalf("expected chatgpt total 2, got %d", providerFiltered.Total)
+	}
+
+	starredResp, err := http.Get(testServer.URL + "/memory/stats?starred=true")
+	if err != nil {
+		t.Fatalf("starred-filtered stats request failed: %v", err)
+	}
+	defer starredResp.Body.Close()
+	if starredResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from starred-filtered stats, got %d", starredResp.StatusCode)
+	}
+	var starredFiltered memory.MemoryStats
+	if err := json.NewDecoder(starredResp.Body).Decode(&starredFiltered); err != nil {
+		t.Fatalf("decoding starred-filtered stats response failed: %v", err)
+	}
+	if starredFiltered.Total != 1 {
+		t.Fatalf("expected starred total 1, got %d", starredFiltered.Total)
+	}
+
+	feedbackResp, err := http.Get(testServer.URL + "/memory/stats?feedback_rating=thumbs_down")
+	if err != nil {
+		t.Fatalf("feedback-filtered stats request failed: %v", err)
+	}
+	defer feedbackResp.Body.Close()
+	if feedbackResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from feedback-filtered stats, got %d", feedbackResp.StatusCode)
+	}
+	var feedbackFiltered memory.MemoryStats
+	if err := json.NewDecoder(feedbackResp.Body).Decode(&feedbackFiltered); err != nil {
+		t.Fatalf("decoding feedback-filtered stats response failed: %v", err)
+	}
+	if feedbackFiltered.Total != 1 {
+		t.Fatalf("expected feedback total 1, got %d", feedbackFiltered.Total)
+	}
+
+	attachmentResp, err := http.Get(testServer.URL + "/memory/stats?has_attachment=true")
+	if err != nil {
+		t.Fatalf("attachment-filtered stats request failed: %v", err)
+	}
+	defer attachmentResp.Body.Close()
+	if attachmentResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from attachment-filtered stats, got %d", attachmentResp.StatusCode)
+	}
+	var attachmentFiltered memory.MemoryStats
+	if err := json.NewDecoder(attachmentResp.Body).Decode(&attachmentFiltered); err != nil {
+		t.Fatalf("decoding attachment-filtered stats response failed: %v", err)
+	}
+	if attachmentFiltered.Total != 1 {
+		t.Fatalf("expected attachment total 1, got %d", attachmentFiltered.Total)
 	}
 }

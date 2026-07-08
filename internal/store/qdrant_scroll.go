@@ -118,6 +118,8 @@ func memoryPointFromPayload(payload map[string]any) memory.MemoryPoint {
 		DateBasis:              asString(payload["date_basis"]),
 		RejectionReason:        asString(payload["rejection_reason"]),
 		MergeTargetID:          asString(payload["merge_target_id"]),
+		AIProvider:             asString(payload["ai_provider"]),
+		AIModel:                asString(payload["ai_model"]),
 	}
 }
 

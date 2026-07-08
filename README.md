@@ -39,12 +39,23 @@ No crystal ball. Just retrieval with receipts.
 
 ---
 
+## What's new
+
+- Memory payloads now include `ai_provider`, `ai_model`, `user_starred`, `user_shared`, `feedback_rating`, `feedback_note`, and `attachment_*` metadata fields for each point in `frontpocket_memory`.
+- New filter fields are available end-to-end (search, stats, browse): `ai_provider`, `ai_model`, `user_starred`, `user_shared`, `feedback_rating`, and `has_attachment`.
+- `GET /memory/browse` is now available for cursor-based browsing with explicit filters (`limit`, `offset`, `since`, `until`, `include_canonical`, plus all memory filter fields).
+- Browse-path payload mapping now includes `ai_provider` and `ai_model`, so provider/model metadata is visible in browse results, not just semantic search results.
+- MindDrill browse now has real controls for AI Provider (All/Claude/ChatGPT), Starred, Shared, Feedback (Any/Thumbs Up/Thumbs Down), and Has Image, wired directly to API query params.
+
+---
+
 ## API endpoints
 
 ```text
 GET    /health
 GET    /openapi.json
 GET    /memory/stats
+GET    /memory/browse
 POST   /memory/session
 DELETE /memory/session
 POST   /memory/ingest/chat

@@ -26,9 +26,14 @@ Delivered:
 Goals:
 
 - Replace the hardcoded browse query with real browse controls.
-- Add first-class filters for project, memory kind, source type, speaker, tags, and date range.
+- Add first-class filters for project, memory kind, source type, speaker, tags, date range, AI provider/model, starred/shared state, feedback rating, and attachment presence.
 - Add memory lens presets such as decisions, preferences, corrections, high-importance memories, source-backed only, and user-authored only.
 - Add a memory inspector drawer for full payload review and copy/export actions.
+
+Delivered in this branch:
+
+- `/memory/browse` now supports filter query params for project, memory kind, source type, speaker, tags, date bounds, ai provider/model, starred/shared state, feedback rating, and attachment presence.
+- MindDrill browse now uses explicit filter controls (AI provider, starred, shared, feedback, has image) instead of random seeded similarity search.
 
 Definition of done:
 

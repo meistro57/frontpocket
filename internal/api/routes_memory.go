@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -300,6 +302,52 @@ func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+func (s *Server) handleMemoryBrowse(w http.ResponseWriter, r *http.Request) {
+	rawSource, ok := s.memoryStore.(interface {
+		ScrollRaw(ctx context.Context, limit int, offset string, filters memory.SearchFilters, since, until time.Time, includeCanonical bool) ([]memory.MemoryPoint, string, error)
+	})
+	if !ok {
+		writeError(w, http.StatusNotImplemented, memory.ErrorBody{
+			Code:    "BROWSE_UNAVAILABLE",
+			Message: "Browse is not supported by the configured memory store.",
+		})
+		return
+	}
+
+	query := r.URL.Query()
+	limit := parsePositiveIntOrDefault(query.Get("limit"), 50)
+	if limit > 500 {
+		limit = 500
+	}
+	offset := strings.TrimSpace(query.Get("offset"))
+	includeCanonical := parseBoolQuery(query.Get("include_canonical"), false)
+	since := parseTimeQuery(query.Get("since"))
+	until := parseTimeQuery(query.Get("until"))
+
+	items, nextOffset, err := rawSource.ScrollRaw(
+		r.Context(),
+		limit,
+		offset,
+		statsFiltersFromQuery(r),
+		since,
+		until,
+		includeCanonical,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			Code:    "BROWSE_FAILED",
+			Message: "Memory browse failed.",
+			Detail:  err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":       items,
+		"next_offset": nextOffset,
+	})
+}
+
 func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 	var req memory.SessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -393,6 +441,12 @@ func statsFiltersFromQuery(r *http.Request) memory.SearchFilters {
 		Speaker:        strings.TrimSpace(query.Get("speaker")),
 		SourceType:     strings.TrimSpace(query.Get("source_type")),
 		ConversationID: strings.TrimSpace(query.Get("conversation_id")),
+		AIProvider:     strings.TrimSpace(query.Get("ai_provider")),
+		AIModel:        strings.TrimSpace(query.Get("ai_model")),
+		FeedbackRating: strings.TrimSpace(query.Get("feedback_rating")),
+		UserStarred:    parseOptionalBool(query.Get("starred")),
+		UserShared:     parseOptionalBool(query.Get("shared")),
+		HasAttachment:  parseOptionalBool(query.Get("has_attachment")),
 	}
 
 	tags := make([]string, 0)
@@ -415,6 +469,49 @@ func statsFiltersFromQuery(r *http.Request) memory.SearchFilters {
 	}
 
 	return filters
+}
+
+func parseOptionalBool(raw string) *bool {
+	trimmed := strings.TrimSpace(strings.ToLower(raw))
+	switch trimmed {
+	case "true", "1", "yes", "y":
+		value := true
+		return &value
+	case "false", "0", "no", "n":
+		value := false
+		return &value
+	default:
+		return nil
+	}
+}
+
+func parseBoolQuery(raw string, fallback bool) bool {
+	if value := parseOptionalBool(raw); value != nil {
+		return *value
+	}
+	return fallback
+}
+
+func parsePositiveIntOrDefault(raw string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseTimeQuery(raw string) time.Time {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse("2006-01-02", trimmed); err == nil {
+		return ts
+	}
+	return time.Time{}
 }
 
 func (s *Server) clampLimit(limit int) int {

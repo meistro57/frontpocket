@@ -124,6 +124,12 @@ type SearchFilters struct {
 	SourceType     string   `json:"source_type,omitempty"`
 	ConversationID string   `json:"conversation_id,omitempty"`
 	Tags           []string `json:"tags,omitempty"`
+	AIProvider     string   `json:"ai_provider,omitempty"`
+	AIModel        string   `json:"ai_model,omitempty"`
+	UserStarred    *bool    `json:"user_starred,omitempty"`
+	UserShared     *bool    `json:"user_shared,omitempty"`
+	FeedbackRating string   `json:"feedback_rating,omitempty"`
+	HasAttachment  *bool    `json:"has_attachment,omitempty"`
 }
 
 type SearchRequest struct {

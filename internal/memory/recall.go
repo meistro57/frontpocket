@@ -280,6 +280,27 @@ func matchesFilters(point MemoryPoint, filters SearchFilters) bool {
 	if filters.ConversationID != "" && !strings.EqualFold(point.ConversationID, filters.ConversationID) {
 		return false
 	}
+	if filters.AIProvider != "" && !strings.EqualFold(point.AIProvider, filters.AIProvider) {
+		return false
+	}
+	if filters.AIModel != "" && !strings.EqualFold(point.AIModel, filters.AIModel) {
+		return false
+	}
+	if filters.UserStarred != nil && point.UserStarred != *filters.UserStarred {
+		return false
+	}
+	if filters.UserShared != nil && point.UserShared != *filters.UserShared {
+		return false
+	}
+	if filters.FeedbackRating != "" && !strings.EqualFold(point.FeedbackRating, filters.FeedbackRating) {
+		return false
+	}
+	if filters.HasAttachment != nil {
+		hasAttachment := strings.TrimSpace(point.AttachmentSourceSystem) != ""
+		if hasAttachment != *filters.HasAttachment {
+			return false
+		}
+	}
 	if len(filters.Tags) == 0 {
 		return true
 	}

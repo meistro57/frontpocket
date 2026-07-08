@@ -560,6 +560,74 @@ func TestUpsertSplitsByPayloadBytes(t *testing.T) {
 	}
 }
 
+func TestToQdrantFilterIncludesNewMetadataFilters(t *testing.T) {
+	starred := true
+	shared := false
+	hasAttachment := true
+
+	filter := toQdrantFilter(memory.SearchFilters{
+		AIProvider:     "claude",
+		AIModel:        "claude-3-5-sonnet",
+		UserStarred:    &starred,
+		UserShared:     &shared,
+		FeedbackRating: "thumbs_down",
+		HasAttachment:  &hasAttachment,
+	})
+	if filter == nil {
+		t.Fatal("expected filter")
+	}
+
+	must, _ := filter["must"].([]map[string]any)
+	mustNot, _ := filter["must_not"].([]map[string]any)
+	if len(must) != 5 {
+		t.Fatalf("expected 5 must clauses, got %d", len(must))
+	}
+	if len(mustNot) != 1 {
+		t.Fatalf("expected 1 must_not clause, got %d", len(mustNot))
+	}
+}
+
+func TestToQdrantFilterHasAttachmentFalseMatchesEmptySourceSystem(t *testing.T) {
+	hasAttachment := false
+	filter := toQdrantFilter(memory.SearchFilters{HasAttachment: &hasAttachment})
+	if filter == nil {
+		t.Fatal("expected filter")
+	}
+	if _, ok := filter["must_not"]; ok {
+		t.Fatalf("expected no must_not clause for has_attachment=false, got %#v", filter["must_not"])
+	}
+	must, ok := filter["must"].([]map[string]any)
+	if !ok || len(must) != 1 {
+		t.Fatalf("expected exactly one must clause for has_attachment=false, got %#v", filter["must"])
+	}
+	if must[0]["key"] != "attachment_source_system" {
+		t.Fatalf("expected must clause on attachment_source_system, got %#v", must[0])
+	}
+}
+
+func TestMemoryPointFromPayloadIncludesAIFields(t *testing.T) {
+	point := memoryPointFromPayload(map[string]any{
+		"memory_id":       "m1",
+		"conversation_id": "c1",
+		"source_type":     "chat_export",
+		"source_title":    "Title",
+		"speaker":         "assistant",
+		"memory_kind":     memory.KindProjectContext,
+		"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		"text":            "hello",
+		"source_quote":    "hello",
+		"ai_provider":     "chatgpt",
+		"ai_model":        "gpt-4o",
+	})
+
+	if point.AIProvider != "chatgpt" {
+		t.Fatalf("expected ai_provider chatgpt, got %q", point.AIProvider)
+	}
+	if point.AIModel != "gpt-4o" {
+		t.Fatalf("expected ai_model gpt-4o, got %q", point.AIModel)
+	}
+}
+
 type testEmbedder struct {
 	embedText func(ctx context.Context, text string) ([]float32, error)
 }

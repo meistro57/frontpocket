@@ -803,6 +803,7 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 
 func toQdrantFilter(filters memory.SearchFilters) map[string]any {
 	must := make([]map[string]any, 0)
+	mustNot := make([]map[string]any, 0)
 	appendMatch := func(key, value string) {
 		value = strings.TrimSpace(value)
 		if value == "" {
@@ -815,20 +816,56 @@ func toQdrantFilter(filters memory.SearchFilters) map[string]any {
 			},
 		})
 	}
+	appendBoolMatch := func(key string, value *bool) {
+		if value == nil {
+			return
+		}
+		must = append(must, map[string]any{
+			"key": key,
+			"match": map[string]any{
+				"value": *value,
+			},
+		})
+	}
 
 	appendMatch("project", filters.Project)
 	appendMatch("memory_kind", filters.MemoryKind)
 	appendMatch("speaker", filters.Speaker)
 	appendMatch("source_type", filters.SourceType)
 	appendMatch("conversation_id", filters.ConversationID)
+	appendMatch("ai_provider", filters.AIProvider)
+	appendMatch("ai_model", filters.AIModel)
+	appendMatch("feedback_rating", filters.FeedbackRating)
+	appendBoolMatch("user_starred", filters.UserStarred)
+	appendBoolMatch("user_shared", filters.UserShared)
+	if filters.HasAttachment != nil {
+		emptyAttachment := map[string]any{
+			"key": "attachment_source_system",
+			"match": map[string]any{
+				"value": "",
+			},
+		}
+		if *filters.HasAttachment {
+			mustNot = append(mustNot, emptyAttachment)
+		} else {
+			must = append(must, emptyAttachment)
+		}
+	}
 	for _, tag := range filters.Tags {
 		appendMatch("tags", tag)
 	}
 
-	if len(must) == 0 {
+	if len(must) == 0 && len(mustNot) == 0 {
 		return nil
 	}
-	return map[string]any{"must": must}
+	filter := map[string]any{}
+	if len(must) > 0 {
+		filter["must"] = must
+	}
+	if len(mustNot) > 0 {
+		filter["must_not"] = mustNot
+	}
+	return filter
 }
 
 func toQdrantPayload(point memory.MemoryPoint) map[string]any {

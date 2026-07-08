@@ -702,6 +702,19 @@ a:hover { text-decoration: underline; }
           <option value="user">you only</option>
           <option value="assistant">ai only</option>
         </select>
+        <select id="browse-ai-provider" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
+          <option value="">all providers</option>
+          <option value="claude">Claude</option>
+          <option value="chatgpt">ChatGPT</option>
+        </select>
+        <select id="browse-feedback" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
+          <option value="">any feedback</option>
+          <option value="thumbs_up">thumbs up</option>
+          <option value="thumbs_down">thumbs down</option>
+        </select>
+        <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-starred">starred</label>
+        <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-shared">shared</label>
+        <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-has-image">has image</label>
         <button class="btn btn-sm" onclick="doBrowse()">load</button>
         <button class="btn btn-sm" onclick="browseMore()" id="browse-more-btn" style="display:none">load more</button>
         <span id="browse-count" style="font-size:12px;color:var(--text3)"></span>
@@ -1289,17 +1302,23 @@ async function browseMore() { await fetchBrowsePage(false); }
 
 async function fetchBrowsePage(reset) {
   const speaker = document.getElementById('browse-speaker').value;
-  const seed = probes.length ? probes[Math.floor(Math.random() * probes.length)] : 'recent memory';
-  const body = { query: seed, limit: 20 };
-  if (browseOffset) body.offset = browseOffset;
-  if (speaker) body.filter = { speaker };
+  const aiProvider = document.getElementById('browse-ai-provider').value;
+  const feedbackRating = document.getElementById('browse-feedback').value;
+  const starred = document.getElementById('browse-starred').checked;
+  const shared = document.getElementById('browse-shared').checked;
+  const hasImage = document.getElementById('browse-has-image').checked;
+  const params = new URLSearchParams({ limit: '20' });
+  if (browseOffset) params.set('offset', browseOffset);
+  if (speaker) params.set('speaker', speaker);
+  if (aiProvider) params.set('ai_provider', aiProvider);
+  if (feedbackRating) params.set('feedback_rating', feedbackRating);
+  if (starred) params.set('starred', 'true');
+  if (shared) params.set('shared', 'true');
+  if (hasImage) params.set('has_attachment', 'true');
+
   try {
-    const d = await fetchJSON('/memory/search', {
-      method: 'POST',
-      headers: jsonHeaders(),
-      body: JSON.stringify(body),
-    }, 12000);
-    const items = d.results || d.memories || (Array.isArray(d) ? d : []);
+    const d = await fetchJSON(`/memory/browse?${params.toString()}`, {}, 12000);
+    const items = d.items || [];
     const start = reset ? 0 : browseItems.length;
     if (reset) browseItems = [];
     browseItems = browseItems.concat(items);
@@ -1308,8 +1327,8 @@ async function fetchBrowsePage(reset) {
     if (browseItems.length === 0) { el.innerHTML = '<div class="empty-state">no results</div>'; return; }
     items.forEach((item, i) => el.insertAdjacentHTML('beforeend', cardHTML(item, start + i, 'b')));
     document.getElementById('browse-count').textContent = `${browseItems.length} loaded`;
-    document.getElementById('browse-more-btn').style.display = items.length === 20 ? '' : 'none';
-    if (items.length > 0) browseOffset = items[items.length - 1].id || null;
+    document.getElementById('browse-more-btn').style.display = d.next_offset ? '' : 'none';
+    browseOffset = d.next_offset || null;
   } catch (e) {
     document.getElementById('browse-error').innerHTML = `<div class="error-box">Browse error: ${esc(e.message)}</div>`;
   }

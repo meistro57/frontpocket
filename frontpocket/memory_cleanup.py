@@ -13,7 +13,7 @@ from .qdrant_io import build_scroll_filter, ensure_collection, parse_point_vecto
 
 RAW_COLLECTION = "frontpocket_memory"
 CLEANED_COLLECTION = "fp_cleaned_memory"
-CLEANUP_VERSION = "memory-cleanup-v1"
+CLEANUP_VERSION = "memory-cleanup-v2"
 
 KNOWN_SPEAKERS = {"user", "assistant", "system", "tool", "mixed", "unknown"}
 
@@ -53,6 +53,8 @@ PROJECT_HINT_KEYWORDS = {
     "lm studio": ("LM Studio / Local LLM Setup", "source_title_keyword", 0.8),
     "nvidia": ("LM Studio / Local LLM Setup", "source_title_keyword", 0.75),
 }
+
+MEMORY_ID_CHUNK_PATTERN = re.compile(r"^(?P<conversation_id>.+)_turn_(?P<turn_number>\d+)_chunk_(?P<chunk_number>\d+)$")
 
 
 @dataclass
@@ -96,7 +98,40 @@ def infer_project_hint(payload: Dict[str, Any]) -> Tuple[Optional[str], str, flo
     return None, "none", 0.0
 
 
-def detect_quote_quality(quote: str) -> Tuple[str, List[str], bool]:
+def parse_turn_chunk_memory_id(memory_id: str) -> Optional[Tuple[str, int, int]]:
+    raw = (memory_id or "").strip()
+    if raw == "":
+        return None
+    match = MEMORY_ID_CHUNK_PATTERN.match(raw)
+    if not match:
+        return None
+    return (
+        match.group("conversation_id"),
+        int(match.group("turn_number")),
+        int(match.group("chunk_number")),
+    )
+
+
+def chunk_position_for_memory_id(
+    memory_id: str,
+    turn_chunk_max: Dict[Tuple[str, int], int],
+) -> Tuple[str, bool, bool]:
+    parsed = parse_turn_chunk_memory_id(memory_id)
+    if not parsed:
+        return "single", True, True
+
+    conversation_id, turn_number, chunk_number = parsed
+    max_chunk = turn_chunk_max.get((conversation_id, turn_number), chunk_number)
+    if max_chunk <= 1:
+        return "single", True, True
+    if chunk_number <= 1:
+        return "first", True, False
+    if chunk_number >= max_chunk:
+        return "last", False, True
+    return "middle", False, False
+
+
+def detect_quote_quality(quote: str, *, is_first_chunk: bool, is_last_chunk: bool) -> Tuple[str, List[str], bool]:
     warnings: List[str] = []
     chunk_boundary_warning = False
     trimmed = quote.strip()
@@ -118,11 +153,23 @@ def detect_quote_quality(quote: str) -> Tuple[str, List[str], bool]:
     if len(trimmed.split()) < 4:
         warnings.append("low_semantic_content")
 
-    if "missing_quote" in warnings:
-        return "missing", warnings, chunk_boundary_warning
-    if any(w in warnings for w in ["possible_midword_start", "unmatched_parentheses"]):
+    malformed_warnings = []
+    if "unmatched_parentheses" in warnings:
+        malformed_warnings.append("unmatched_parentheses")
+    if is_first_chunk and "possible_midword_start" in warnings:
+        malformed_warnings.append("possible_midword_start")
+    if is_first_chunk and "starts_lower_fragment" in warnings:
+        malformed_warnings.append("starts_lower_fragment")
+
+    truncated_warnings = []
+    if "ellipsis_truncation" in warnings:
+        truncated_warnings.append("ellipsis_truncation")
+    if is_last_chunk and "ends_mid_sentence" in warnings:
+        truncated_warnings.append("ends_mid_sentence")
+
+    if malformed_warnings:
         return "malformed", warnings, chunk_boundary_warning
-    if any(w in warnings for w in ["ellipsis_truncation", "ends_mid_sentence"]):
+    if truncated_warnings:
         return "truncated", warnings, chunk_boundary_warning
     if warnings:
         return "partial", warnings, chunk_boundary_warning
@@ -306,6 +353,7 @@ def clean_point(
     *,
     seen_ids: set,
     seen_hashes: Dict[str, str],
+    turn_chunk_max: Dict[Tuple[str, int], int],
     include_vectors: bool,
     repair_quotes: bool,
 ) -> CleanupResult:
@@ -342,7 +390,22 @@ def clean_point(
 
     source_quote_original = str(payload.get("source_quote") or "")
     source_quote_cleaned = source_quote_original.strip()
-    quote_quality, quote_warnings, chunk_boundary_warning = detect_quote_quality(source_quote_cleaned)
+
+    chunk_position, is_first_chunk, is_last_chunk = chunk_position_for_memory_id(raw_memory_id, turn_chunk_max)
+
+    # Quality must be assessed against the real chunk content (`text`), not
+    # `source_quote`/`summary` — those are intentionally-truncated preview
+    # fields (they end in "..." by design) and will always look "truncated"
+    # regardless of whether the actual embedded content is complete. Only
+    # fall back to source_quote when text is genuinely empty (older/edge
+    # records that may only have a quote, no separate text field).
+    text_raw = str(payload.get("text") or "").strip()
+    quality_basis = text_raw if text_raw else source_quote_cleaned
+    quote_quality, quote_warnings, chunk_boundary_warning = detect_quote_quality(
+        quality_basis,
+        is_first_chunk=is_first_chunk,
+        is_last_chunk=is_last_chunk,
+    )
     warnings.extend(quote_warnings)
 
     quote_repair_method = "none"
@@ -469,6 +532,7 @@ def clean_point(
         "quote_repair_method": quote_repair_method,
         "quote_repair_confidence": quote_repair_confidence,
         "chunk_boundary_warning": chunk_boundary_warning,
+        "chunk_position": chunk_position,
         "payload_cleaned": payload_cleaned,
         "vector_present": vector_present,
         "vector_names": vector_names,
@@ -504,6 +568,37 @@ def clean_point(
     }
 
     return CleanupResult(payload=cleaned_payload, vector=[0.0])
+
+
+def build_turn_chunk_max_map(*, batch_size: int = 1000) -> Dict[Tuple[str, int], int]:
+    chunk_max: Dict[Tuple[str, int], int] = {}
+    offset: Optional[Any] = None
+
+    while True:
+        body: Dict[str, Any] = {
+            "limit": max(1, batch_size),
+            "with_payload": ["memory_id"],
+            "with_vector": False,
+        }
+        if offset is not None:
+            body["offset"] = offset
+
+        result = qdrant("POST", f"/collections/{RAW_COLLECTION}/points/scroll", body)
+        points = result.get("result", {}).get("points", [])
+        for point in points:
+            memory_id = str((point.get("payload") or {}).get("memory_id") or "").strip()
+            parsed = parse_turn_chunk_memory_id(memory_id)
+            if not parsed:
+                continue
+            conversation_id, turn_number, chunk_number = parsed
+            key = (conversation_id, turn_number)
+            chunk_max[key] = max(chunk_max.get(key, 0), chunk_number)
+
+        offset = result.get("result", {}).get("next_page_offset")
+        if not offset or not points:
+            break
+
+    return chunk_max
 
 
 def iter_raw_points(
@@ -610,6 +705,8 @@ def run(argv: Optional[List[str]] = None) -> int:
 
     ensure_collection(CLEANED_COLLECTION, vector_size=1, distance="Cosine")
 
+    turn_chunk_max = build_turn_chunk_max_map(batch_size=max(500, args.batch_size))
+
     seen_ids: set = set()
     seen_hashes: Dict[str, str] = {}
     results: List[CleanupResult] = []
@@ -628,6 +725,7 @@ def run(argv: Optional[List[str]] = None) -> int:
             point,
             seen_ids=seen_ids,
             seen_hashes=seen_hashes,
+            turn_chunk_max=turn_chunk_max,
             include_vectors=args.include_vectors,
             repair_quotes=args.repair_quotes,
         )
