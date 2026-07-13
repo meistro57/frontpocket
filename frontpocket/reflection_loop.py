@@ -466,7 +466,15 @@ class LoopState(TypedDict, total=False):
     last_error: str
 
 
-def run_once(args: argparse.Namespace, model: str) -> LoopState:
+def worker_slot(point: MemoryPoint, worker_total: int) -> int:
+    if worker_total <= 1:
+        return 0
+    shard_key = point.memory_id or point.point_id or point.source_quote or point.text or "fallback"
+    worker_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"fp_reflect_worker:{shard_key}")
+    return worker_uuid.int % worker_total
+
+
+def run_once(args: argparse.Namespace, model: str, worker_index: int = 0, worker_total: int = 1) -> LoopState:
     source = CLEANED_SOURCE_COLLECTION if args.from_cleaned else RAW_SOURCE_COLLECTION
 
     print("\n[config]")
@@ -475,6 +483,8 @@ def run_once(args: argparse.Namespace, model: str) -> LoopState:
     print(f"  model:     {model}")
     print(f"  limit:     {args.limit}")
     print(f"  speaker:   {args.speaker or 'all'}")
+    if worker_total > 1:
+        print(f"  worker:    {worker_index + 1}/{worker_total}")
     goal = getattr(args, "goal", "")
     if goal:
         print(f"  goal:      {goal}")
@@ -508,6 +518,9 @@ def run_once(args: argparse.Namespace, model: str) -> LoopState:
     for point in iterator:
         if state["processed"] >= args.limit:
             break
+
+        if worker_total > 1 and worker_slot(point, worker_total) != worker_index:
+            continue
 
         if args.from_cleaned and not args.include_needs_review and not point.safe_for_reflection:
             state["skipped"] += 1
@@ -569,6 +582,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--speaker", default=None, choices=["user", "assistant", "system", "tool", "mixed", "unknown"], help="Filter by speaker")
     parser.add_argument("--loop-interval", type=float, default=0.0, help="Seconds between runs (0 = single run)")
     parser.add_argument("--max-loops", type=int, default=1, help="How many runs (0 = infinite)")
+    parser.add_argument("--mode", default="single", choices=["single", "workers"], help="Run mode")
+    parser.add_argument("--workers", type=int, default=1, help="Worker count when --mode workers")
+    parser.add_argument("--worker-id", type=int, default=0, help="Worker index [0..workers-1] when --mode workers")
     parser.add_argument("--from-scratch", action="store_true", help="Wipe fp_reflections and start fresh")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-point output")
     parser.add_argument("--goal", default="", help="Optional reflection goal text (legacy compatibility)")
@@ -588,8 +604,19 @@ def run(argv: Optional[List[str]] = None) -> int:
 
     model = args.model.strip()
 
+    if args.workers < 1:
+        print("[error] --workers must be >= 1")
+        return 1
+
+    worker_total = args.workers if args.mode == "workers" else 1
+    worker_index = args.worker_id if args.mode == "workers" else 0
+
+    if worker_index < 0 or worker_index >= worker_total:
+        print("[error] --worker-id must be between 0 and workers-1")
+        return 1
+
     if args.loop_interval <= 0:
-        state = run_once(args, model)
+        state = run_once(args, model, worker_index=worker_index, worker_total=worker_total)
         return 0 if state["errors"] == 0 else 1
 
     run_count = 0
@@ -598,7 +625,7 @@ def run(argv: Optional[List[str]] = None) -> int:
     while True:
         run_count += 1
         print(f"\n[timer] run {run_count}")
-        state = run_once(args, model)
+        state = run_once(args, model, worker_index=worker_index, worker_total=worker_total)
         total_errors += state["errors"]
 
         if args.max_loops > 0 and run_count >= args.max_loops:
