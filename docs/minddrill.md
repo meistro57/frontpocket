@@ -85,6 +85,9 @@ stay visible while you converse. A "thinking…" placeholder bubble appears imme
 and is replaced in place once the response arrives; on error, the placeholder is removed and
 your message is restored to the input box for retry.
 
+Assistant responses now render Markdown in the thread (headings, lists, blockquotes, inline
+code, fenced code blocks, links, and emphasis), while user turns stay plain text.
+
 ## Chat mode memory separation
 
 MindDrill chat keeps continuity in a dedicated Qdrant collection (`MINDDRILL_MEMORY_COLLECTION`,

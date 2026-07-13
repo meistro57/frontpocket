@@ -473,8 +473,44 @@ a:hover { text-decoration: underline; }
   padding: .7rem .9rem;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+.chat-turn-body { word-break: break-word; }
+.chat-turn-body p { margin: 0 0 .55rem; }
+.chat-turn-body p:last-child { margin-bottom: 0; }
+.chat-turn-body ul, .chat-turn-body ol { margin: 0 0 .55rem 1.1rem; }
+.chat-turn-body li { margin: 0 0 .2rem; }
+.chat-turn-body pre {
+  margin: 0 0 .55rem;
+  padding: .55rem .65rem;
+  border-radius: var(--radius);
+  background: var(--bg2);
+  overflow-x: auto;
+}
+.chat-turn-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg2);
+  padding: .08rem .3rem;
+  border-radius: 4px;
+}
+.chat-turn-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.chat-turn-body blockquote {
+  margin: 0 0 .55rem;
+  padding-left: .7rem;
+  border-left: 2px solid var(--border2);
+  color: var(--text2);
+}
+.chat-turn-body h1,
+.chat-turn-body h2,
+.chat-turn-body h3,
+.chat-turn-body h4,
+.chat-turn-body h5,
+.chat-turn-body h6 {
+  margin: 0 0 .4rem;
+  font-size: 13px;
 }
 .chat-turn-user {
   background: var(--purple-bg);
@@ -742,6 +778,103 @@ let probes = [];
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function inlineMarkdown(text) {
+  const tokens = [];
+  let out = esc(text || '');
+  out = out.replace(/`([^`]+)`/g, (_, code) => {
+    const token = `@@MD_CODE_${tokens.length}@@`;
+    tokens.push(`<code>${code}</code>`);
+    return token;
+  });
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  out = out.replace(/_([^_]+)_/g, '<em>$1</em>');
+  tokens.forEach((token, i) => {
+    out = out.replace(`@@MD_CODE_${i}@@`, token);
+  });
+  return out;
+}
+function blockMarkdown(lines) {
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${inlineMarkdown(heading[2].trim())}</h${level}>`);
+      i += 1;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quoted = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoted.push(lines[i].replace(/^>\s?/, ''));
+        i += 1;
+      }
+      blocks.push(`<blockquote>${inlineMarkdown(quoted.join('\n')).replace(/\n/g, '<br>')}</blockquote>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        items.push(`<li>${inlineMarkdown(lines[i].replace(/^[-*]\s+/, ''))}</li>`);
+        i += 1;
+      }
+      blocks.push(`<ul>${items.join('')}</ul>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        items.push(`<li>${inlineMarkdown(lines[i].replace(/^\d+\.\s+/, ''))}</li>`);
+        i += 1;
+      }
+      blocks.push(`<ol>${items.join('')}</ol>`);
+      continue;
+    }
+    const paragraph = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i]) && !/^>\s?/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i])) {
+      paragraph.push(lines[i]);
+      i += 1;
+    }
+    blocks.push(`<p>${inlineMarkdown(paragraph.join('\n')).replace(/\n/g, '<br>')}</p>`);
+  }
+  return blocks.join('');
+}
+function markdownToHTML(text) {
+  if (!text) return '';
+  const normalized = String(text).replace(/\r\n?/g, '\n');
+  const lines = normalized.split('\n');
+  const chunks = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^```/.test(lines[i])) {
+      i += 1;
+      const code = [];
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        code.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length && /^```/.test(lines[i])) i += 1;
+      chunks.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+      continue;
+    }
+    const textChunk = [];
+    while (i < lines.length && !/^```/.test(lines[i])) {
+      textChunk.push(lines[i]);
+      i += 1;
+    }
+    if (textChunk.length) chunks.push(blockMarkdown(textChunk));
+  }
+  return chunks.join('');
+}
 function scoreClass(s) {
   if (s == null) return 'score-low';
   if (s > 0.72) return 'score-high';
@@ -1006,8 +1139,13 @@ function appendChatTurn(role, text) {
   label.className = 'chat-turn-label';
   label.textContent = role === 'user' ? 'you' : 'minddrill';
   turn.appendChild(label);
-  const body = document.createElement('span');
-  body.textContent = text;
+  const body = document.createElement('div');
+  body.className = 'chat-turn-body';
+  if (role === 'assistant') {
+    body.innerHTML = markdownToHTML(text);
+  } else {
+    body.textContent = text;
+  }
   turn.appendChild(body);
   thread.appendChild(turn);
   thread.scrollTop = thread.scrollHeight;
@@ -1046,7 +1184,7 @@ function renderChatResponse(data) {
   chatMindMemories = mind;
   let turn;
   if (pendingAssistantTurn) {
-    pendingAssistantTurn.querySelector('span').textContent = data.answer || '';
+    pendingAssistantTurn.querySelector('.chat-turn-body').innerHTML = markdownToHTML(data.answer || '');
     turn = pendingAssistantTurn;
     pendingAssistantTurn = null;
   } else {
@@ -1074,7 +1212,7 @@ async function doChat(rememberThis) {
   document.getElementById('chat-error').innerHTML = '';
   appendChatTurn('user', message);
   pendingAssistantTurn = appendChatTurn('assistant', '');
-  pendingAssistantTurn.querySelector('span').innerHTML = '<span class="spinner"></span>&nbsp; thinking…';
+  pendingAssistantTurn.querySelector('.chat-turn-body').innerHTML = '<span class="spinner"></span>&nbsp; thinking…';
   document.getElementById('chat-input').disabled = true;
   document.getElementById('chat-remember-btn').disabled = true;
 

@@ -252,6 +252,7 @@ embedded in the `minddrill` binary via `//go:embed`.
 - Search history sidebar
 - 24 pre-built quick-probe topics
 - Expandable result cards with drill-deeper, same-convo, related, and copy-payload actions
+- Markdown-rendered assistant replies in chat mode (with safe link and code formatting)
 
 **Start MindDrill:**
 

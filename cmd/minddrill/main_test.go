@@ -116,3 +116,30 @@ func TestMindDrillUIUsesNonDebugSessionDeleteRoute(t *testing.T) {
 		t.Fatal("expected UI to use shared JSON fetch helper")
 	}
 }
+
+func TestMindDrillUIRendersAssistantMarkdown(t *testing.T) {
+	testServer := httptest.NewServer(newHandler("http://localhost:8088"))
+	defer testServer.Close()
+
+	resp, err := http.Get(testServer.URL + "/")
+	if err != nil {
+		t.Fatalf("root request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed reading root response body: %v", err)
+	}
+	content := string(body)
+
+	if !strings.Contains(content, "function markdownToHTML(text)") {
+		t.Fatal("expected UI to include markdown parser for assistant responses")
+	}
+	if !strings.Contains(content, "body.innerHTML = markdownToHTML(text)") {
+		t.Fatal("expected assistant turns to render markdown HTML")
+	}
+	if !strings.Contains(content, "chat-turn-body") {
+		t.Fatal("expected chat turn body element for markdown rendering")
+	}
+}
