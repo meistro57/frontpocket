@@ -47,7 +47,7 @@ FrontPocket API calls, replacing the old hardcoded API constant.
 
 ## Roadmap
 
-The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). Sprint 1 focuses on trust and control: non-debug chat session deletion, structured UI errors, richer chat evidence cards, and local search history controls.
+The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). Current focus is stable, trustable retrieval UX: stale-response guards, explicit per-mode rendering, duplicate grouping controls, richer context-pack output, and browse-first filtering.
 
 ## Requirements
 
@@ -71,11 +71,26 @@ MindDrill is a thin client over the FrontPocket API:
 ## Quick probes
 
 The sidebar's "quick probes" are generated dynamically from the corpus, not hardcoded. On load,
-MindDrill calls `GET /memory/stats`, which now returns a `top_titles` field — a sample of
-distinct `source_title` values pulled from the corpus (capped at 60 titles, sampled from up to
-4,000 points). The sidebar renders these as clickable probe buttons, and the browse tab uses a
-random probe as its seed query. This means every FrontPocket install shows probes relevant to
-that user's own corpus, with no user-specific content shipped in the public repo.
+MindDrill calls `GET /memory/stats`, which returns a `top_titles` field — a sample of distinct
+`source_title` values pulled from the corpus (capped at 60 titles, sampled from up to 4,000
+points). The sidebar renders these as clickable probe buttons. This means every FrontPocket
+install shows probes relevant to that user's own corpus, with no user-specific content shipped in
+the public repo.
+
+## Rendering stability and duplicate control
+
+MindDrill now uses strict per-mode render targets and clears each target before append, so
+re-running queries or switching tabs does not accumulate stale result cards.
+
+Search, browse, and context-pack requests also carry client request IDs; if an older request
+finishes after a newer one has started, the older response is ignored.
+
+Search and browse include a `group duplicates` toggle (default on):
+
+- duplicates are grouped by `conversation_id` and normalized text;
+- the highest-scoring item is kept as the visible primary card;
+- collapsed groups show a clickable `×N similar` badge;
+- turning grouping off shows all rows.
 
 ## Conversation thread
 
@@ -86,7 +101,12 @@ and is replaced in place once the response arrives; on error, the placeholder is
 your message is restored to the input box for retry.
 
 Assistant responses now render Markdown in the thread (headings, lists, blockquotes, inline
-code, fenced code blocks, links, and emphasis), while user turns stay plain text.
+code, fenced code blocks, links, `---` horizontal rules, and emphasis), while user turns stay
+plain text.
+
+Expanded result-card full text in search/browse now uses the same sanitized Markdown renderer as
+chat mode (no raw HTML injection from memory text), including fenced code blocks with per-block
+copy buttons.
 
 ## Chat mode memory separation
 
@@ -113,6 +133,18 @@ The response includes:
 MindDrill writes new chat memory through the Go API only, using `MINDDRILL_MEMORY_WRITE_MODE`
 (`summary` by default, or `raw`) and periodic session summaries controlled by
 `MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY`.
+
+## Context-pack output UX
+
+Context-pack output now includes:
+
+- character count and rough token estimate;
+- copy options for JSON and Markdown formats;
+- collapsible JSON output to avoid giant always-open payload blocks.
+
+Search/browse/context-pack actions disable their submit button while requests are in flight and
+show a lightweight inline loading state. Zero-result responses now use a friendly empty-state
+message (`No memories matched — try broadening your query`).
 
 Chat-memory points are embedded automatically on write if they don't already carry a vector
 (`QdrantMemoryStore.Upsert` embeds any point with an empty `Vector` field using the configured

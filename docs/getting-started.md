@@ -188,6 +188,16 @@ from its own origin and uses it to apply the `--api` target for all browser API 
 Ensure the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md`
 for options.
 
+Current MindDrill behavior highlights:
+
+- Search and browse support duplicate grouping (`group duplicates`, default on) with expandable
+  `×N similar` groups and a `show all` path.
+- Search/browse/context-pack requests show inline loading states, disable submit buttons while in
+  flight, and show friendly empty states when no memories match.
+- Expanded result-card full text uses the same safe Markdown renderer as chat mode, including
+  fenced code blocks with per-block copy actions.
+- Corpus stats for projects and memory kinds are clickable shortcuts into browse filters.
+
 ## 13) Expose MCP tools for external agents
 
 Run the MCP stdio bridge from the same machine as FrontPocket:

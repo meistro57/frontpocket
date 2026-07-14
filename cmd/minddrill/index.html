@@ -203,8 +203,11 @@ a:hover { text-decoration: underline; }
 
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .stat { background: var(--bg2); border-radius: var(--radius); padding: .5rem .65rem; }
+.stat.stat-clickable { cursor: pointer; transition: all .15s; }
+.stat.stat-clickable:hover { background: var(--bg3); }
 .stat-val { font-size: 17px; font-weight: 500; }
 .stat-lbl { font-size: 10px; color: var(--text3); margin-top: 1px; }
+.stat-links { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
 
 .pill-group { display: flex; flex-wrap: wrap; gap: 5px; }
 .pill {
@@ -250,7 +253,8 @@ a:hover { text-decoration: underline; }
 }
 .history-item:hover { background: var(--bg2); color: var(--text); }
 
-.search-bar { display: flex; gap: 8px; align-items: center; }
+.search-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inline-toggle { font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
 .search-bar input {
   flex: 1;
   height: 38px;
@@ -313,6 +317,16 @@ a:hover { text-decoration: underline; }
 .result-card.open { border-color: var(--purple-border); }
 
 .rc-header { display: flex; align-items: flex-start; gap: 8px; }
+.rc-expand {
+  border: 0;
+  background: transparent;
+  color: var(--text3);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1;
+}
+.rc-expand:hover { color: var(--text); }
 .score-badge {
   font-size: 11px; font-weight: 500;
   padding: 2px 8px;
@@ -323,6 +337,15 @@ a:hover { text-decoration: underline; }
 .score-high { background: var(--green-bg); color: var(--green); }
 .score-mid  { background: var(--amber-bg); color: var(--amber); }
 .score-low  { background: var(--gray-bg);  color: var(--gray); }
+.similar-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--teal-bg);
+  color: var(--teal);
+  border: 0.5px solid var(--teal-border);
+  cursor: pointer;
+}
 
 .rc-body { flex: 1; min-width: 0; }
 .rc-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
@@ -341,9 +364,17 @@ a:hover { text-decoration: underline; }
   background: var(--bg2);
   border-radius: var(--radius);
   display: none;
-  white-space: pre-wrap;
   word-break: break-word;
 }
+.rc-fulltext p { margin: 0 0 .5rem; }
+.rc-fulltext p:last-child { margin-bottom: 0; }
+.rc-fulltext hr { border: 0; border-top: 0.5px solid var(--border2); margin: .55rem 0; }
+.rc-fulltext pre { margin: 0 0 .55rem; padding: .55rem .65rem; border-radius: var(--radius); background: var(--bg); overflow-x: auto; }
+.rc-fulltext code { font-family: var(--font-mono); font-size: 12px; background: var(--bg); padding: .08rem .3rem; border-radius: 4px; }
+.rc-fulltext pre code { background: transparent; padding: 0; }
+.md-code-head { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.md-copy-btn { height: 24px; padding: 0 8px; font-size: 11px; border-radius: 6px; border: 0.5px solid var(--border2); background: var(--bg); color: var(--text2); cursor: pointer; }
+.md-copy-btn:hover { color: var(--text); }
 .rc-fulltext.show { display: block; }
 
 .rc-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
@@ -373,6 +404,7 @@ a:hover { text-decoration: underline; }
 
 .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text3); font-size: 14px; }
 .empty-state .icon { font-size: 32px; margin-bottom: 10px; }
+.loading-state { display: flex; align-items: center; gap: 8px; padding: .8rem 0; color: var(--text2); font-size: 13px; }
 .spinner {
   display: inline-block;
   width: 14px; height: 14px;
@@ -419,6 +451,8 @@ a:hover { text-decoration: underline; }
   max-height: 60vh;
   overflow-y: auto;
 }
+.context-pack-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.context-pack-count { font-size: 12px; color: var(--text3); margin-top: 2px; }
 .chat-panel { display: flex; flex-direction: column; gap: .75rem; }
 .chat-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chat-row input {
@@ -613,9 +647,11 @@ a:hover { text-decoration: underline; }
       <div class="stats-grid">
         <div class="stat"><div class="stat-val" id="s-points">—</div><div class="stat-lbl">total memories</div></div>
         <div class="stat"><div class="stat-val" id="s-speakers">—</div><div class="stat-lbl">speakers</div></div>
-        <div class="stat"><div class="stat-val" id="s-kinds">—</div><div class="stat-lbl">memory kinds</div></div>
-        <div class="stat"><div class="stat-val" id="s-projects">—</div><div class="stat-lbl">projects</div></div>
+        <div class="stat stat-clickable" onclick="browseFromStat('kind')" title="browse by memory kind"><div class="stat-val" id="s-kinds">—</div><div class="stat-lbl">memory kinds</div></div>
+        <div class="stat stat-clickable" onclick="browseFromStat('project')" title="browse by project"><div class="stat-val" id="s-projects">—</div><div class="stat-lbl">projects</div></div>
       </div>
+      <div class="stat-links" id="kind-links"></div>
+      <div class="stat-links" id="project-links"></div>
     </div>
 
     <div>
@@ -703,6 +739,7 @@ a:hover { text-decoration: underline; }
             <option value="50">50</option>
           </select>
         </div>
+        <label class="inline-toggle"><input type="checkbox" id="search-group-duplicates" checked>group duplicates (off: show all)</label>
       </div>
       <div id="error-area"></div>
       <div class="results-header">
@@ -738,6 +775,12 @@ a:hover { text-decoration: underline; }
           <option value="user">you only</option>
           <option value="assistant">ai only</option>
         </select>
+        <select id="browse-kind" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
+          <option value="">all kinds</option>
+        </select>
+        <select id="browse-project" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
+          <option value="">all projects</option>
+        </select>
         <select id="browse-ai-provider" style="font-size:12px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-family:var(--font)">
           <option value="">all providers</option>
           <option value="claude">Claude</option>
@@ -751,7 +794,8 @@ a:hover { text-decoration: underline; }
         <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-starred">starred</label>
         <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-shared">shared</label>
         <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px"><input type="checkbox" id="browse-has-image">has image</label>
-        <button class="btn btn-sm" onclick="doBrowse()">load</button>
+        <label class="inline-toggle"><input type="checkbox" id="browse-group-duplicates" checked>group duplicates (off: show all)</label>
+        <button class="btn btn-sm" onclick="doBrowse()" id="browse-load-btn">load</button>
         <button class="btn btn-sm" onclick="browseMore()" id="browse-more-btn" style="display:none">load more</button>
         <span id="browse-count" style="font-size:12px;color:var(--text3)"></span>
       </div>
@@ -774,6 +818,16 @@ let chatFrontMemories = [];
 let chatMindMemories = [];
 let systemPromptInfo = '';
 let probes = [];
+let lastContextPackData = null;
+let lastContextPackQuery = '';
+let statsKinds = [];
+let statsProjects = [];
+let renderedSearchItems = [];
+let renderedBrowseItems = [];
+let searchRequestId = 0;
+let contextRequestId = 0;
+let browseRequestId = 0;
+const expandedGroupState = { r: new Set(), b: new Set() };
 
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -796,6 +850,8 @@ function inlineMarkdown(text) {
   });
   return out;
 }
+
+// Keep one markdown renderer path so chat and cards stay consistent.
 function blockMarkdown(lines) {
   const blocks = [];
   let i = 0;
@@ -809,6 +865,11 @@ function blockMarkdown(lines) {
     if (heading) {
       const level = heading[1].length;
       blocks.push(`<h${level}>${inlineMarkdown(heading[2].trim())}</h${level}>`);
+      i += 1;
+      continue;
+    }
+    if (/^---+\s*$/.test(line)) {
+      blocks.push('<hr>');
       i += 1;
       continue;
     }
@@ -840,7 +901,7 @@ function blockMarkdown(lines) {
       continue;
     }
     const paragraph = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i]) && !/^>\s?/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i])) {
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i]) && !/^>\s?/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i]) && !/^---+\s*$/.test(lines[i])) {
       paragraph.push(lines[i]);
       i += 1;
     }
@@ -848,6 +909,12 @@ function blockMarkdown(lines) {
   }
   return blocks.join('');
 }
+
+function renderMarkdownCodeBlock(codeText) {
+  const code = esc(codeText || '');
+  return `<div class="md-code-block"><div class="md-code-head"><button class="md-copy-btn" onclick="event.stopPropagation();copyCodeBlock(this)">copy</button></div><pre><code>${code}</code></pre></div>`;
+}
+
 function markdownToHTML(text) {
   if (!text) return '';
   const normalized = String(text).replace(/\r\n?/g, '\n');
@@ -863,7 +930,7 @@ function markdownToHTML(text) {
         i += 1;
       }
       if (i < lines.length && /^```/.test(lines[i])) i += 1;
-      chunks.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+      chunks.push(renderMarkdownCodeBlock(code.join('\n')));
       continue;
     }
     const textChunk = [];
@@ -874,6 +941,14 @@ function markdownToHTML(text) {
     if (textChunk.length) chunks.push(blockMarkdown(textChunk));
   }
   return chunks.join('');
+}
+
+function copyCodeBlock(btn) {
+  const code = btn.closest('.md-code-block')?.querySelector('code')?.textContent || '';
+  navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = 'copied';
+    setTimeout(() => { btn.textContent = 'copy'; }, 1200);
+  });
 }
 function scoreClass(s) {
   if (s == null) return 'score-low';
@@ -980,11 +1055,21 @@ async function loadStats() {
     const r = await fetch(apiURL('/memory/stats'));
     if (!r.ok) return;
     const d = await r.json();
-    // FrontPocket returns { total, by_kind, by_speaker, by_project, top_titles }
-    document.getElementById('s-points').textContent   = fmtNum(d.total);
+    // Keep stats interactive so users can jump straight to browse filters.
+    const byKind = d.by_kind && typeof d.by_kind === 'object' ? d.by_kind : {};
+    const byProject = d.by_project && typeof d.by_project === 'object' ? d.by_project : {};
+    statsKinds = Object.keys(byKind).filter(Boolean).sort((a, b) => (byKind[b] || 0) - (byKind[a] || 0));
+    statsProjects = Object.keys(byProject).filter(Boolean).sort((a, b) => (byProject[b] || 0) - (byProject[a] || 0));
+
+    document.getElementById('s-points').textContent = fmtNum(d.total);
     document.getElementById('s-speakers').textContent = fmtNum(d.by_speaker ? Object.keys(d.by_speaker).length : null);
-    document.getElementById('s-kinds').textContent    = fmtNum(d.by_kind    ? Object.keys(d.by_kind).length    : null);
-    document.getElementById('s-projects').textContent = fmtNum(d.by_project ? Object.keys(d.by_project).length : null);
+    document.getElementById('s-kinds').textContent = fmtNum(statsKinds.length);
+    document.getElementById('s-projects').textContent = fmtNum(statsProjects.length);
+
+    renderStatLinks('kind-links', statsKinds, value => applyBrowseFilter('kind', value));
+    renderStatLinks('project-links', statsProjects, value => applyBrowseFilter('project', value));
+    populateBrowseSelect('browse-kind', 'all kinds', statsKinds);
+    populateBrowseSelect('browse-project', 'all projects', statsProjects);
 
     const titles = Array.isArray(d.top_titles) ? d.top_titles.filter(Boolean) : [];
     if (titles.length) {
@@ -992,6 +1077,47 @@ async function loadStats() {
       buildProbes();
     }
   } catch {}
+}
+
+function renderStatLinks(containerId, values, onClick) {
+  const container = document.getElementById(containerId);
+  container.replaceChildren();
+  values.slice(0, 8).forEach(value => {
+    const pill = document.createElement('button');
+    pill.className = 'pill';
+    pill.textContent = value;
+    pill.type = 'button';
+    pill.onclick = () => onClick(value);
+    container.appendChild(pill);
+  });
+}
+
+function populateBrowseSelect(selectId, label, values) {
+  const select = document.getElementById(selectId);
+  select.replaceChildren();
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = label;
+  select.appendChild(first);
+  values.forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+}
+
+function browseFromStat(type) {
+  setMode('browse', document.querySelectorAll('.mode-tab')[3]);
+  const selectId = type === 'kind' ? 'browse-kind' : 'browse-project';
+  document.getElementById(selectId).focus();
+}
+
+function applyBrowseFilter(type, value) {
+  setMode('browse', document.querySelectorAll('.mode-tab')[3]);
+  if (type === 'kind') document.getElementById('browse-kind').value = value;
+  if (type === 'project') document.getElementById('browse-project').value = value;
+  doBrowse();
 }
 
 function setFilter(key, val, el) {
@@ -1004,10 +1130,13 @@ function setFilter(key, val, el) {
 function setMode(mode, el) {
   document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  document.getElementById('panel-chat').style.display    = mode === 'chat'    ? '' : 'none';
-  document.getElementById('panel-search').style.display  = mode === 'search'  ? '' : 'none';
+  document.getElementById('panel-chat').style.display = mode === 'chat' ? '' : 'none';
+  document.getElementById('panel-search').style.display = mode === 'search' ? '' : 'none';
   document.getElementById('panel-context').style.display = mode === 'context' ? '' : 'none';
-  document.getElementById('panel-browse').style.display  = mode === 'browse'  ? '' : 'none';
+  document.getElementById('panel-browse').style.display = mode === 'browse' ? '' : 'none';
+  // Keep each mode's results isolated to prevent stale cross-mode card accumulation.
+  if (mode !== 'search') document.getElementById('results').replaceChildren();
+  if (mode !== 'browse') document.getElementById('browse-results').replaceChildren();
 }
 
 function buildProbes() {
@@ -1122,13 +1251,32 @@ function ensureChatSession() {
   document.getElementById('chat-session-id').textContent = `session: ${chatSessionId}`;
 }
 
-function renderChatMemoryList(elId, items, ns) {
+function renderChatMemoryList(elId, items) {
   const el = document.getElementById(elId);
+  // Clear chat memory containers before each render so card counts never drift.
+  el.replaceChildren();
   if (!Array.isArray(items) || items.length === 0) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">none used</div>';
+    const empty = document.createElement('div');
+    empty.style.fontSize = '12px';
+    empty.style.color = 'var(--text3)';
+    empty.textContent = 'none used';
+    el.appendChild(empty);
     return;
   }
-  el.innerHTML = items.map((item, i) => cardHTML(item, i, ns)).join('');
+  items.forEach(item => {
+    const p = item.payload || item;
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-memory-item';
+    const title = document.createElement('div');
+    title.className = 'chat-memory-item-title';
+    title.textContent = p.source_title || p.conversation_id || 'memory';
+    const body = document.createElement('div');
+    body.className = 'chat-memory-item-body';
+    body.textContent = p.source_quote || p.summary || p.text || '';
+    wrap.appendChild(title);
+    wrap.appendChild(body);
+    el.appendChild(wrap);
+  });
 }
 
 function appendChatTurn(role, text) {
@@ -1193,8 +1341,8 @@ function renderChatResponse(data) {
   renderSuggestionChips(turn, data.suggestions);
   document.getElementById('chat-memory-status').textContent = `using ${front.length} FrontPocket memories + ${mind.length} MindDrill memories`;
   document.getElementById('chat-provider-model').textContent = `${data.provider || 'none'} / ${data.model || 'retrieval-only'}`;
-  renderChatMemoryList('chat-front-memories', front, 'cf');
-  renderChatMemoryList('chat-mind-memories', mind, 'cm');
+  renderChatMemoryList('chat-front-memories', front);
+  renderChatMemoryList('chat-mind-memories', mind);
 }
 
 async function doChat(rememberThis) {
@@ -1264,20 +1412,86 @@ async function forgetChatSession() {
   document.getElementById('chat-memory-status').textContent = 'using 0 FrontPocket memories + 0 MindDrill memories';
   chatFrontMemories = [];
   chatMindMemories = [];
-  renderChatMemoryList('chat-front-memories', [], 'cf');
-  renderChatMemoryList('chat-mind-memories', [], 'cm');
+  renderChatMemoryList('chat-front-memories', []);
+  renderChatMemoryList('chat-mind-memories', []);
+}
+
+function normalizeMemoryText(text) {
+  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function safeScore(item) {
+  const value = Number(item?.score ?? item?.similarity);
+  return Number.isFinite(value) ? value : -1;
+}
+
+function groupDuplicateResults(items) {
+  // Collapse duplicates by conversation or normalized text while keeping the strongest score.
+  const groups = [];
+  const groupMap = new Map();
+  items.forEach((item, index) => {
+    const p = item.payload || item;
+    const convoKey = p.conversation_id ? `cid:${String(p.conversation_id)}` : '';
+    const textKey = normalizeMemoryText(p.text || p.source_quote || p.summary || '');
+    const keys = [convoKey, textKey ? `txt:${textKey}` : ''].filter(Boolean);
+    const matched = keys.map(key => groupMap.get(key)).find(Boolean);
+    const group = matched || { id: keys[0] || `raw:${index}`, keys: new Set(), members: [] };
+    keys.forEach(key => {
+      group.keys.add(key);
+      groupMap.set(key, group);
+    });
+    if (!matched) groups.push(group);
+    group.members.push(item);
+  });
+  groups.forEach(group => group.members.sort((a, b) => safeScore(b) - safeScore(a)));
+  return groups;
+}
+
+function buildDisplayEntries(items, ns, groupDuplicates) {
+  if (!groupDuplicates) {
+    return {
+      entries: items.map(item => ({ item, groupId: '' })),
+      total: items.length,
+      groupedCount: items.length,
+    };
+  }
+  const groups = groupDuplicateResults(items);
+  const entries = [];
+  groups.forEach(group => {
+    entries.push({ item: group.members[0], groupId: group.id, similarCount: Math.max(group.members.length - 1, 0), isPrimary: true });
+    if (expandedGroupState[ns].has(group.id)) {
+      group.members.slice(1).forEach(item => entries.push({ item, groupId: group.id, similarCount: 0, isPrimary: false }));
+    }
+  });
+  return { entries, total: items.length, groupedCount: groups.length };
+}
+
+function setLoadingState(containerId, message) {
+  const container = document.getElementById(containerId);
+  container.replaceChildren();
+  const loading = document.createElement('div');
+  loading.className = 'loading-state';
+  loading.innerHTML = `<span class="spinner"></span><span>${esc(message)}</span>`;
+  container.appendChild(loading);
+}
+
+function setEmptyState(containerId, message) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = `<div class="empty-state"><div class="icon">🧠</div><div>${esc(message)}</div></div>`;
 }
 
 async function doSearch() {
   const q = document.getElementById('q').value.trim();
   if (!q) return;
-  const limit = parseInt(document.getElementById('limit-sel').value);
+  const limit = parseInt(document.getElementById('limit-sel').value, 10);
   const btn = document.getElementById('search-btn');
+  const reqId = ++searchRequestId;
+  expandedGroupState.r.clear();
   btn.disabled = true;
   document.getElementById('search-icon').innerHTML = '<span class="spinner"></span>';
   document.getElementById('error-area').innerHTML = '';
-  document.getElementById('results').innerHTML = '<div class="empty-state">drilling into memory…</div>';
   document.getElementById('results-label').textContent = 'searching…';
+  setLoadingState('results', 'searching memories…');
 
   try {
     const d = await fetchJSON('/memory/search', {
@@ -1285,62 +1499,80 @@ async function doSearch() {
       headers: jsonHeaders(),
       body: JSON.stringify({ query: q, limit: limit * 2 }),
     }, 15000);
+    // Ignore stale responses when a newer request has already started.
+    if (reqId !== searchRequestId) return;
     lastResults = d.results || d.memories || (Array.isArray(d) ? d : []);
     addHistory(q);
     renderResults(lastResults);
   } catch (e) {
-    document.getElementById('error-area').innerHTML =
-      `<div class="error-box">Could not reach FrontPocket at ${esc(API)} — is it running? (${esc(e.message)})</div>`;
-    document.getElementById('results').innerHTML = '';
+    if (reqId !== searchRequestId) return;
+    document.getElementById('error-area').innerHTML = `<div class="error-box">Could not reach FrontPocket at ${esc(API)} — is it running? (${esc(e.message)})</div>`;
     document.getElementById('results-label').textContent = 'connection error';
+    document.getElementById('results').replaceChildren();
   } finally {
+    if (reqId !== searchRequestId) return;
     btn.disabled = false;
     document.getElementById('search-icon').textContent = '🔍';
   }
 }
 
 function renderResults(raw) {
-  let items = raw;
+  const limit = parseInt(document.getElementById('limit-sel').value, 10);
+  const groupDuplicates = document.getElementById('search-group-duplicates').checked;
+  let items = Array.isArray(raw) ? raw : [];
   if (activeFilters.speaker !== 'all') {
-    items = raw.filter(r => (r.payload?.speaker || r.speaker) === activeFilters.speaker);
+    items = items.filter(r => (r.payload?.speaker || r.speaker) === activeFilters.speaker);
   }
-  items = items.slice(0, parseInt(document.getElementById('limit-sel').value));
-  document.getElementById('results-label').textContent =
-    items.length ? `${items.length} result${items.length !== 1 ? 's' : ''} found` : 'no results';
+  items = items.slice(0, limit);
+  const rendered = buildDisplayEntries(items, 'r', groupDuplicates);
   const el = document.getElementById('results');
-  if (!items.length) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">👻</div><div>nothing surfaced — try a different probe</div></div>';
+  // Always clear before rendering so the visible list matches the header count.
+  el.replaceChildren();
+  if (!rendered.entries.length) {
+    document.getElementById('results-label').textContent = 'no results';
+    setEmptyState('results', 'No memories matched — try broadening your query');
+    renderedSearchItems = [];
     return;
   }
-  el.innerHTML = items.map((item, i) => cardHTML(item, i, 'r')).join('');
+  renderedSearchItems = rendered.entries.map(entry => entry.item);
+  const extra = groupDuplicates && rendered.total !== rendered.groupedCount ? ` (${rendered.total - rendered.groupedCount} grouped)` : '';
+  document.getElementById('results-label').textContent = `${rendered.entries.length} result${rendered.entries.length !== 1 ? 's' : ''} found${extra}`;
+  rendered.entries.forEach((entry, i) => el.insertAdjacentHTML('beforeend', cardHTML(entry.item, i, 'r', entry)));
 }
 
-function cardHTML(item, i, ns) {
+function cardHTML(item, i, ns, entry = {}) {
   const p = item.payload || item;
   const score = item.score ?? item.similarity ?? null;
   const speaker = p.speaker || '';
   const title = esc(p.source_title || p.title || 'untitled');
   const quote = esc(p.source_quote || p.summary || '');
-  const text  = esc(p.text || '');
-  const ts    = formatDate(p.timestamp);
-  const cid   = (p.conversation_id || '').slice(0, 8);
-  const proj  = esc(p.project || '');
-  const kind  = esc(p.memory_kind || '');
+  // Reuse markdown renderer for expanded full text, with escaped HTML output.
+  const text = markdownToHTML(p.text || '');
+  const ts = formatDate(p.timestamp);
+  const cid = (p.conversation_id || '').slice(0, 8);
+  const proj = esc(p.project || '');
+  const kind = esc(p.memory_kind || '');
   const model = esc(p.embedding_model || '');
+  const scoreTip = score == null ? 'cosine similarity unavailable' : `cosine similarity: ${Number(score).toFixed(2)}`;
+  const similarBadge = entry.isPrimary && entry.similarCount > 0
+    ? `<button class="similar-badge" onclick="event.stopPropagation();toggleSimilarGroup('${ns}','${encodeURIComponent(entry.groupId || '')}')">×${entry.similarCount} similar</button>`
+    : '';
   return `<div class="result-card" id="${ns}-card-${i}" onclick="toggleCard('${ns}',${i})">
     <div class="rc-header">
-      <div class="score-badge ${scoreClass(score)}">${formatScore(score)}</div>
+      <div class="score-badge ${scoreClass(score)}" title="${esc(scoreTip)}">${formatScore(score)}</div>
+      <button class="rc-expand" id="${ns}-exp-${i}" aria-label="toggle expanded" onclick="event.stopPropagation();toggleCard('${ns}',${i})">▸</button>
       <div class="rc-body">
         <div class="rc-title">${title}</div>
         <div class="rc-quote" id="${ns}-q-${i}">${quote}</div>
         <div class="rc-fulltext" id="${ns}-ft-${i}">${text}</div>
         <div class="rc-meta">
           ${speaker ? `<span class="tag ${speaker}">${esc(speaker)}</span>` : ''}
-          ${ts    ? `<span class="tag">${ts}</span>` : ''}
-          ${cid   ? `<span class="tag">${cid}…</span>` : ''}
-          ${proj  ? `<span class="tag">${proj}</span>` : ''}
-          ${kind  ? `<span class="tag">${kind}</span>` : ''}
+          ${ts ? `<span class="tag">${ts}</span>` : ''}
+          ${cid ? `<span class="tag">${cid}…</span>` : ''}
+          ${proj ? `<span class="tag">${proj}</span>` : ''}
+          ${kind ? `<span class="tag">${kind}</span>` : ''}
           ${model ? `<span class="tag">${model}</span>` : ''}
+          ${similarBadge}
         </div>
       </div>
     </div>
@@ -1354,18 +1586,28 @@ function cardHTML(item, i, ns) {
 }
 
 function getItem(i, ns) {
-  if (ns === 'r') return lastResults[i] || {};
-  if (ns === 'b') return browseItems[i] || {};
-  if (ns === 'cf') return chatFrontMemories[i] || {};
-  if (ns === 'cm') return chatMindMemories[i] || {};
+  if (ns === 'r') return renderedSearchItems[i] || {};
+  if (ns === 'b') return renderedBrowseItems[i] || {};
   return {};
 }
 
 function toggleCard(ns, i) {
-  document.getElementById(`${ns}-card-${i}`).classList.toggle('open');
-  document.getElementById(`${ns}-a-${i}`).classList.toggle('show');
-  document.getElementById(`${ns}-q-${i}`).classList.toggle('full');
-  document.getElementById(`${ns}-ft-${i}`).classList.toggle('show');
+  const card = document.getElementById(`${ns}-card-${i}`);
+  if (!card) return;
+  const open = card.classList.toggle('open');
+  document.getElementById(`${ns}-a-${i}`)?.classList.toggle('show', open);
+  document.getElementById(`${ns}-q-${i}`)?.classList.toggle('full', open);
+  document.getElementById(`${ns}-ft-${i}`)?.classList.toggle('show', open);
+  document.getElementById(`${ns}-exp-${i}`).textContent = open ? '▾' : '▸';
+}
+
+function toggleSimilarGroup(ns, encodedGroupId) {
+  const groupId = decodeURIComponent(encodedGroupId || '');
+  const state = expandedGroupState[ns];
+  if (state.has(groupId)) state.delete(groupId);
+  else state.add(groupId);
+  if (ns === 'r') renderResults(lastResults);
+  if (ns === 'b') renderBrowseResults();
 }
 
 function drillDeeper(i, ns) {
@@ -1395,59 +1637,151 @@ function copyPayload(i, ns) {
   const item = getItem(i, ns);
   navigator.clipboard.writeText(JSON.stringify(item, null, 2)).then(() => {
     const btn = document.querySelectorAll(`#${ns}-a-${i} button`)[3];
-    if (btn) { btn.textContent = '✓ copied'; setTimeout(() => btn.textContent = '📋 copy', 1500); }
+    if (btn) {
+      btn.textContent = '✓ copied';
+      setTimeout(() => { btn.textContent = '📋 copy'; }, 1500);
+    }
   });
+}
+
+function contextPackToMarkdown(data, query) {
+  if (typeof data === 'string') return data;
+  const title = `# Context Pack\n\nQuery: ${query}\n`;
+  const memories = Array.isArray(data?.memories) ? data.memories : [];
+  const rows = memories.map((memory, i) => {
+    const p = memory.payload || memory;
+    const quote = p.source_quote || p.summary || p.text || '';
+    return `## Memory ${i + 1}\n- title: ${p.source_title || 'untitled'}\n- conversation: ${p.conversation_id || 'n/a'}\n- score: ${memory.score ?? memory.similarity ?? 'n/a'}\n\n${quote}`;
+  });
+  return `${title}\n${rows.join('\n\n')}`.trim();
+}
+
+function copyContextJSON(btn) {
+  const text = typeof lastContextPackData === 'string' ? lastContextPackData : JSON.stringify(lastContextPackData, null, 2);
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ copied';
+    setTimeout(() => { btn.textContent = '📋 copy as JSON'; }, 1500);
+  });
+}
+
+function copyContextMarkdown(btn) {
+  const text = contextPackToMarkdown(lastContextPackData, lastContextPackQuery);
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ copied';
+    setTimeout(() => { btn.textContent = '📋 copy as Markdown'; }, 1500);
+  });
+}
+
+function toggleContextJSON(btn) {
+  const details = document.getElementById('ctx-json-wrap');
+  if (!details) return;
+  details.open = !details.open;
+  btn.textContent = details.open ? 'collapse JSON' : 'expand JSON';
 }
 
 async function doContextPack() {
   const q = document.getElementById('ctx-q').value.trim();
   if (!q) return;
-  const limit = parseInt(document.getElementById('ctx-limit').value);
+  const limit = parseInt(document.getElementById('ctx-limit').value, 10);
   const btn = document.getElementById('ctx-btn');
+  const reqId = ++contextRequestId;
   btn.disabled = true;
   document.getElementById('ctx-error').innerHTML = '';
-  document.getElementById('ctx-result').innerHTML = '<div class="empty-state">packing context…</div>';
+  setLoadingState('ctx-result', 'building context pack…');
   try {
     const d = await fetchJSON('/memory/context-pack', {
       method: 'POST',
       headers: jsonHeaders(),
       body: JSON.stringify({ query: q, limit }),
     }, 15000);
-    const text = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
-    const escaped = esc(text);
-    document.getElementById('ctx-result').innerHTML = `<div class="context-pack">
+    if (reqId !== contextRequestId) return;
+    lastContextPackData = d;
+    lastContextPackQuery = q;
+    const jsonText = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
+    const chars = jsonText.length;
+    const tokens = Math.max(1, Math.round(chars / 4));
+    const result = document.getElementById('ctx-result');
+    // Render context pack with collapsed JSON and two copy formats.
+    result.innerHTML = `<div class="context-pack">
       <h3>context pack — ${esc(q)}</h3>
-      <pre id="ctx-pre">${escaped}</pre>
-      <button class="btn btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText(document.getElementById('ctx-pre').textContent).then(()=>{this.textContent='✓ copied';setTimeout(()=>this.textContent='📋 copy',1500)})">📋 copy</button>
+      <div class="context-pack-count">${fmtNum(chars)} chars • ~${fmtNum(tokens)} tokens</div>
+      <div class="context-pack-tools">
+        <button class="btn btn-sm" onclick="copyContextJSON(this)">📋 copy as JSON</button>
+        <button class="btn btn-sm" onclick="copyContextMarkdown(this)">📋 copy as Markdown</button>
+        <button class="btn btn-sm" onclick="toggleContextJSON(this)">expand JSON</button>
+      </div>
+      <details id="ctx-json-wrap">
+        <summary style="font-size:12px;color:var(--text2);margin-top:8px">packed JSON</summary>
+        <pre id="ctx-pre">${esc(jsonText)}</pre>
+      </details>
     </div>`;
   } catch (e) {
+    if (reqId !== contextRequestId) return;
     document.getElementById('ctx-error').innerHTML = `<div class="error-box">Context pack failed: ${esc(e.message)}</div>`;
-    document.getElementById('ctx-result').innerHTML = '';
-  } finally { btn.disabled = false; }
+    document.getElementById('ctx-result').replaceChildren();
+  } finally {
+    if (reqId !== contextRequestId) return;
+    btn.disabled = false;
+  }
+}
+
+function renderBrowseResults() {
+  const groupDuplicates = document.getElementById('browse-group-duplicates').checked;
+  const rendered = buildDisplayEntries(browseItems, 'b', groupDuplicates);
+  const el = document.getElementById('browse-results');
+  // Clear browse list before rendering to avoid appended stale cards.
+  el.replaceChildren();
+  if (!rendered.entries.length) {
+    setEmptyState('browse-results', 'No memories matched — try broadening your query');
+    document.getElementById('browse-count').textContent = '0 loaded';
+    renderedBrowseItems = [];
+    document.getElementById('browse-more-btn').style.display = browseOffset ? '' : 'none';
+    return;
+  }
+  renderedBrowseItems = rendered.entries.map(entry => entry.item);
+  rendered.entries.forEach((entry, i) => el.insertAdjacentHTML('beforeend', cardHTML(entry.item, i, 'b', entry)));
+  const extra = groupDuplicates && rendered.total !== rendered.groupedCount ? ` (${rendered.total - rendered.groupedCount} grouped)` : '';
+  document.getElementById('browse-count').textContent = `${rendered.entries.length} loaded${extra}`;
+  document.getElementById('browse-more-btn').style.display = browseOffset ? '' : 'none';
 }
 
 async function doBrowse() {
   browseOffset = null;
   browseItems = [];
-  document.getElementById('browse-results').innerHTML = '<div class="empty-state">loading…</div>';
+  expandedGroupState.b.clear();
+  browseRequestId += 1;
   document.getElementById('browse-error').innerHTML = '';
-  document.getElementById('browse-more-btn').style.display = 'none';
   document.getElementById('browse-count').textContent = '';
-  await fetchBrowsePage(true);
+  setLoadingState('browse-results', 'loading memories…');
+  await fetchBrowsePage(true, browseRequestId);
 }
 
-async function browseMore() { await fetchBrowsePage(false); }
+async function browseMore() {
+  await fetchBrowsePage(false, browseRequestId);
+}
 
-async function fetchBrowsePage(reset) {
+async function fetchBrowsePage(reset, reqId) {
+  const loadBtn = document.getElementById('browse-load-btn');
+  const moreBtn = document.getElementById('browse-more-btn');
+  loadBtn.disabled = true;
+  moreBtn.disabled = true;
+  // Show a lightweight in-flight state for both initial load and pagination.
+  document.getElementById('browse-count').innerHTML = '<span class="spinner"></span> loading…';
+
   const speaker = document.getElementById('browse-speaker').value;
+  const kind = document.getElementById('browse-kind').value;
+  const project = document.getElementById('browse-project').value;
   const aiProvider = document.getElementById('browse-ai-provider').value;
   const feedbackRating = document.getElementById('browse-feedback').value;
   const starred = document.getElementById('browse-starred').checked;
   const shared = document.getElementById('browse-shared').checked;
   const hasImage = document.getElementById('browse-has-image').checked;
+
   const params = new URLSearchParams({ limit: '20' });
   if (browseOffset) params.set('offset', browseOffset);
   if (speaker) params.set('speaker', speaker);
+  if (kind) params.set('memory_kind', kind);
+  if (project) params.set('project', project);
   if (aiProvider) params.set('ai_provider', aiProvider);
   if (feedbackRating) params.set('feedback_rating', feedbackRating);
   if (starred) params.set('starred', 'true');
@@ -1456,25 +1790,38 @@ async function fetchBrowsePage(reset) {
 
   try {
     const d = await fetchJSON(`/memory/browse?${params.toString()}`, {}, 12000);
-    const items = d.items || [];
-    const start = reset ? 0 : browseItems.length;
+    if (reqId !== browseRequestId) return;
+    const items = Array.isArray(d.items) ? d.items : [];
     if (reset) browseItems = [];
     browseItems = browseItems.concat(items);
-    const el = document.getElementById('browse-results');
-    if (reset) el.innerHTML = '';
-    if (browseItems.length === 0) { el.innerHTML = '<div class="empty-state">no results</div>'; return; }
-    items.forEach((item, i) => el.insertAdjacentHTML('beforeend', cardHTML(item, start + i, 'b')));
-    document.getElementById('browse-count').textContent = `${browseItems.length} loaded`;
-    document.getElementById('browse-more-btn').style.display = d.next_offset ? '' : 'none';
     browseOffset = d.next_offset || null;
+    renderBrowseResults();
   } catch (e) {
+    if (reqId !== browseRequestId) return;
     document.getElementById('browse-error').innerHTML = `<div class="error-box">Browse error: ${esc(e.message)}</div>`;
+    if (reset) document.getElementById('browse-results').replaceChildren();
+  } finally {
+    if (reqId !== browseRequestId) return;
+    loadBtn.disabled = false;
+    moreBtn.disabled = false;
   }
 }
 
-document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
-document.getElementById('ctx-q').addEventListener('keydown', e => { if (e.key === 'Enter') doContextPack(); });
-document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') doChat(false); });
+function bindEnterSubmit(inputId, handler) {
+  // Use one Enter handler pattern across text inputs for consistency.
+  document.getElementById(inputId).addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handler();
+    }
+  });
+}
+
+bindEnterSubmit('q', doSearch);
+bindEnterSubmit('ctx-q', doContextPack);
+bindEnterSubmit('chat-input', () => doChat(false));
+document.getElementById('search-group-duplicates').addEventListener('change', () => renderResults(lastResults));
+document.getElementById('browse-group-duplicates').addEventListener('change', renderBrowseResults);
 
 async function initApp() {
   initTheme();
@@ -1484,8 +1831,8 @@ async function initApp() {
   ensureChatSession();
   chatFrontMemories = [];
   chatMindMemories = [];
-  renderChatMemoryList('chat-front-memories', [], 'cf');
-  renderChatMemoryList('chat-mind-memories', [], 'cm');
+  renderChatMemoryList('chat-front-memories', []);
+  renderChatMemoryList('chat-mind-memories', []);
   await loadConfig();
   await checkHealth();
   setInterval(checkHealth, 30000);

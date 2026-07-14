@@ -33,7 +33,13 @@ Goals:
 Delivered in this branch:
 
 - `/memory/browse` now supports filter query params for project, memory kind, source type, speaker, tags, date bounds, ai provider/model, starred/shared state, feedback rating, and attachment presence.
-- MindDrill browse now uses explicit filter controls (AI provider, starred, shared, feedback, has image) instead of random seeded similarity search.
+- MindDrill browse now uses explicit filter controls (speaker, memory kind, project, AI provider, starred/shared state, feedback, has image) instead of random seeded similarity search.
+- Search and browse now support duplicate grouping (default on) with expandable `×N similar` clusters and a `show all` path.
+- Search/browse/context-pack now use inline loading indicators, disable submit buttons while requests are active, and show friendly empty-state feedback.
+- Context-pack output now has character/token estimates, copy-as-JSON / copy-as-Markdown actions, and collapsible JSON display.
+- Result cards now use chevron expand/collapse controls and tooltip text on score badges.
+- Expanded search/browse full text now uses the same sanitized Markdown renderer as chat mode, including fenced code block copy actions.
+- Rendering now clears per-mode containers and ignores stale async responses to prevent duplicate/stale card accumulation.
 
 Definition of done:
 

@@ -46,7 +46,13 @@ No crystal ball. Just retrieval with receipts.
 - New filter fields are available end-to-end (search, stats, browse): `ai_provider`, `ai_model`, `user_starred`, `user_shared`, `feedback_rating`, and `has_attachment`.
 - `GET /memory/browse` is now available for cursor-based browsing with explicit filters (`limit`, `offset`, `since`, `until`, `include_canonical`, plus all memory filter fields).
 - Browse-path payload mapping now includes `ai_provider` and `ai_model`, so provider/model metadata is visible in browse results, not just semantic search results.
-- MindDrill browse now has real controls for AI Provider (All/Claude/ChatGPT), Starred, Shared, Feedback (Any/Thumbs Up/Thumbs Down), and Has Image, wired directly to API query params.
+- MindDrill browse now has real controls for AI Provider (All/Claude/ChatGPT), memory kind, project, Starred, Shared, Feedback (Any/Thumbs Up/Thumbs Down), and Has Image, wired directly to API query params.
+- MindDrill now guards against stale async responses and always clears per-mode containers before render, so visible card counts stay aligned with header counts after repeated search/browse/context actions.
+- MindDrill search and browse support duplicate grouping by conversation/text (default on) with expandable `×N similar` groups and a `show all` toggle.
+- Expanded result-card full text now uses the same sanitized Markdown renderer as chat mode, including `---` horizontal rules and fenced code blocks with per-block copy buttons.
+- Search, browse, and context-pack now show inline loading states, disable submit buttons while requests are in flight, and use a friendly empty-state message when nothing matches.
+- Context-pack output now includes character/token estimates, copy-as-JSON and copy-as-Markdown actions, and collapsible JSON output.
+- Corpus stats for projects and memory kinds are now clickable and jump directly into browse filters.
 
 ---
 
@@ -246,14 +252,16 @@ embedded in the `minddrill` binary via `//go:embed`.
 
 **Features:**
 - Semantic search with speaker filter (you / AI / all)
-- Context pack builder
-- Browse mode with load-more pagination
-- Corpus stats panel (total memories, speakers, kinds, projects)
+- Optional duplicate grouping in search and browse (default on) with expandable `×N similar` clusters
+- Context pack builder with copy-as-JSON / copy-as-Markdown and collapsible payload output
+- Browse mode with load-more pagination and explicit filters (speaker, kind, project, AI provider, feedback, starred/shared/has-image)
+- Corpus stats panel (total memories, speakers, kinds, projects) with clickable kind/project shortcuts into browse
 - Dark mode toggle with localStorage persistence
 - Search history sidebar
-- 24 pre-built quick-probe topics
-- Expandable result cards with drill-deeper, same-convo, related, and copy-payload actions
-- Markdown-rendered assistant replies in chat mode (with safe link and code formatting)
+- Quick probes generated from corpus titles (via `/memory/stats`)
+- Expandable result cards with chevron toggles, drill-deeper, same-convo, related, and copy-payload actions
+- Match-score badges with cosine-similarity tooltip text
+- Markdown-rendered assistant replies and expanded full-text cards (safe links, hr support, fenced code + copy)
 
 **Start MindDrill:**
 
