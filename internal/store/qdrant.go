@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -82,12 +83,20 @@ func (c *QdrantClient) CountPoints(ctx context.Context, collection string, paylo
 }
 
 func (c *QdrantClient) CountPointsWithFilter(ctx context.Context, collection string, filter map[string]any) (int, error) {
+	return c.countPointsWithFilter(ctx, collection, filter, true)
+}
+
+func (c *QdrantClient) CountPointsEstimateWithFilter(ctx context.Context, collection string, filter map[string]any) (int, error) {
+	return c.countPointsWithFilter(ctx, collection, filter, false)
+}
+
+func (c *QdrantClient) countPointsWithFilter(ctx context.Context, collection string, filter map[string]any, exact bool) (int, error) {
 	trimmedCollection := strings.TrimSpace(collection)
 	if trimmedCollection == "" {
 		return 0, fmt.Errorf("QDRANT_COLLECTION is required")
 	}
 
-	body := map[string]any{"exact": true}
+	body := map[string]any{"exact": exact}
 	if filter != nil {
 		body["filter"] = filter
 	}
@@ -105,6 +114,30 @@ func (c *QdrantClient) CountPointsWithFilter(ctx context.Context, collection str
 		return 0, err
 	}
 	return response.Result.Count, nil
+}
+
+type qdrantCollectionInfo struct {
+	PointsCount int
+}
+
+func (c *QdrantClient) CollectionInfo(ctx context.Context, collection string) (qdrantCollectionInfo, error) {
+	trimmedCollection := strings.TrimSpace(collection)
+	if trimmedCollection == "" {
+		return qdrantCollectionInfo{}, fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+
+	var response struct {
+		Result map[string]any `json:"result"`
+	}
+	status, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/collections/%s", trimmedCollection), nil, &response)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return qdrantCollectionInfo{}, nil
+		}
+		return qdrantCollectionInfo{}, err
+	}
+
+	return qdrantCollectionInfo{PointsCount: asInt(response.Result["points_count"])}, nil
 }
 
 type qdrantFacetHit struct {
@@ -289,12 +322,30 @@ func (e *DimensionMismatchError) Error() string {
 }
 
 type QdrantMemoryStore struct {
-	client     *QdrantClient
-	embedder   embed.Embedder
-	collection string
-	vectorName string
-	distance   string
-	fallback   memory.MemoryStore
+	client                   *QdrantClient
+	embedder                 embed.Embedder
+	collection               string
+	vectorName               string
+	distance                 string
+	fallback                 memory.MemoryStore
+	distinctCacheTTL         time.Duration
+	distinctCacheMu          sync.RWMutex
+	distinctFieldVals        map[string]distinctFieldCacheEntry
+	unfilteredAggCacheMu     sync.RWMutex
+	unfilteredAggCacheByColl map[string]unfilteredAggregationCacheEntry
+}
+
+type distinctFieldCacheEntry struct {
+	values    []string
+	expiresAt time.Time
+}
+
+type unfilteredAggregationCacheEntry struct {
+	byKind    map[string]int
+	bySpeaker map[string]int
+	byProject map[string]int
+	topTitles []string
+	expiresAt time.Time
 }
 
 func NewQdrantMemoryStore(client *QdrantClient, embedder embed.Embedder, collection, vectorName, distance string, fallback memory.MemoryStore) *QdrantMemoryStore {
@@ -303,12 +354,15 @@ func NewQdrantMemoryStore(client *QdrantClient, embedder embed.Embedder, collect
 		dist = "Cosine"
 	}
 	return &QdrantMemoryStore{
-		client:     client,
-		embedder:   embedder,
-		collection: strings.TrimSpace(collection),
-		vectorName: strings.TrimSpace(vectorName),
-		distance:   dist,
-		fallback:   fallback,
+		client:                   client,
+		embedder:                 embedder,
+		collection:               strings.TrimSpace(collection),
+		vectorName:               strings.TrimSpace(vectorName),
+		distance:                 dist,
+		fallback:                 fallback,
+		distinctCacheTTL:         2 * time.Minute,
+		distinctFieldVals:        make(map[string]distinctFieldCacheEntry),
+		unfilteredAggCacheByColl: make(map[string]unfilteredAggregationCacheEntry),
 	}
 }
 
@@ -550,72 +604,95 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 	}
 	filter := toQdrantFilter(filters)
 
-	// Use Qdrant's lightweight count endpoint so large collections do not require scroll scans.
-	total, err := s.client.CountPointsWithFilter(ctx, s.collection, filter)
-	if err == nil {
-		stats.Total = total
+	var totalErr error
+	if filter == nil {
+		if info, infoErr := s.client.CollectionInfo(ctx, s.collection); infoErr == nil {
+			stats.Total = info.PointsCount
+		} else {
+			totalErr = infoErr
+		}
+	}
+	if filter != nil || stats.Total <= 0 {
+		total, err := s.client.CountPointsWithFilter(ctx, s.collection, filter)
+		if err != nil {
+			totalErr = err
+		} else {
+			stats.Total = total
+			totalErr = nil
+		}
+	}
+	if totalErr != nil {
+		if s.fallback != nil {
+			return s.fallback.Stats(ctx, filters)
+		}
+		return memory.MemoryStats{}, totalErr
 	}
 
-	// Use facet endpoints for grouped counts; this avoids per-request full collection scans.
-	kindHits, kindErr := s.client.FacetCounts(ctx, s.collection, "memory_kind", filter, 128)
-	speakerHits, speakerErr := s.client.FacetCounts(ctx, s.collection, "speaker", filter, 32)
-	projectHits, projectErr := s.client.FacetCounts(ctx, s.collection, "project", filter, 512)
-	titleHits, titleErr := s.client.FacetCounts(ctx, s.collection, "source_title", filter, 60)
-	if err == nil && kindErr == nil && speakerErr == nil && projectErr == nil && titleErr == nil {
-		for _, hit := range kindHits {
-			stats.ByKind[hit.Value] = hit.Count
+	if filter == nil {
+		if cached, ok := s.getCachedUnfilteredAggregation(); ok {
+			stats.ByKind = cached.byKind
+			stats.BySpeaker = cached.bySpeaker
+			stats.ByProject = cached.byProject
+			stats.TopTitles = cached.topTitles
+			return stats, nil
 		}
-		for _, hit := range speakerHits {
-			stats.BySpeaker[hit.Value] = hit.Count
+		agg, err := s.sampleUnfilteredAggregation(ctx)
+		if err != nil {
+			return memory.MemoryStats{}, err
 		}
-		for _, hit := range projectHits {
-			stats.ByProject[hit.Value] = hit.Count
-		}
-		for _, hit := range titleHits {
-			stats.TopTitles = append(stats.TopTitles, hit.Value)
-		}
+		s.setCachedUnfilteredAggregation(agg)
+		stats.ByKind = agg.byKind
+		stats.BySpeaker = agg.bySpeaker
+		stats.ByProject = agg.byProject
+		stats.TopTitles = agg.topTitles
 		return stats, nil
 	}
 
-	legacyStats, legacyErr := s.statsViaScroll(ctx, filters)
-	if legacyErr == nil {
-		if legacyStats.Total == 0 && s.fallback != nil {
-			return s.fallback.Stats(ctx, filters)
-		}
-		return legacyStats, nil
-	}
-	if s.fallback != nil {
-		return s.fallback.Stats(ctx, filters)
-	}
+	kindCounts, _, err := s.aggregateDistinctFieldCounts(ctx, "memory_kind", filter, 128)
 	if err != nil {
 		return memory.MemoryStats{}, err
 	}
-	return memory.MemoryStats{}, legacyErr
-}
-
-func (s *QdrantMemoryStore) statsViaScroll(ctx context.Context, filters memory.SearchFilters) (memory.MemoryStats, error) {
-	stats := memory.MemoryStats{
-		ByKind:    make(map[string]int),
-		BySpeaker: make(map[string]int),
-		ByProject: make(map[string]int),
+	speakerCounts, _, err := s.aggregateDistinctFieldCounts(ctx, "speaker", filter, 32)
+	if err != nil {
+		return memory.MemoryStats{}, err
+	}
+	projectCounts, _, err := s.aggregateDistinctFieldCounts(ctx, "project", filter, 512)
+	if err != nil {
+		return memory.MemoryStats{}, err
+	}
+	_, titles, err := s.aggregateDistinctFieldCounts(ctx, "source_title", filter, 60)
+	if err != nil {
+		return memory.MemoryStats{}, err
 	}
 
-	const maxTitleSample = 4000
-	const maxDistinctTitles = 60
-	titleSeen := make(map[string]struct{})
-	titles := make([]string, 0, maxDistinctTitles)
-	scanned := 0
+	stats.ByKind = kindCounts
+	stats.BySpeaker = speakerCounts
+	stats.ByProject = projectCounts
+	stats.TopTitles = titles
+	return stats, nil
+}
 
+func (s *QdrantMemoryStore) sampleUnfilteredAggregation(ctx context.Context) (unfilteredAggregationCacheEntry, error) {
+	const maxSamplePoints = 1024
+	const pageLimit = 256
+	const maxTitles = 60
+
+	agg := unfilteredAggregationCacheEntry{
+		byKind:    make(map[string]int),
+		bySpeaker: make(map[string]int),
+		byProject: make(map[string]int),
+		topTitles: make([]string, 0, maxTitles),
+	}
+	titleCounts := make(map[string]int)
 	var offset any
 	lastOffset := ""
-	for {
+	scanned := 0
+
+	for scanned < maxSamplePoints {
 		body := map[string]any{
-			"limit":        256,
+			"limit":        pageLimit,
 			"with_payload": true,
 			"with_vector":  false,
-		}
-		if filter := toQdrantFilter(filters); filter != nil {
-			body["filter"] = filter
 		}
 		if offset != nil {
 			body["offset"] = offset
@@ -633,30 +710,27 @@ func (s *QdrantMemoryStore) statsViaScroll(ctx context.Context, filters memory.S
 		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/scroll", s.collection), body, &response)
 		if err != nil {
 			if status == http.StatusNotFound {
-				return memory.MemoryStats{}, nil
+				return agg, nil
 			}
-			return memory.MemoryStats{}, err
+			return unfilteredAggregationCacheEntry{}, err
 		}
 
 		for _, point := range response.Result.Points {
-			stats.Total++
+			scanned++
 			if kind := strings.TrimSpace(asString(point.Payload["memory_kind"])); kind != "" {
-				stats.ByKind[kind]++
+				agg.byKind[kind]++
 			}
 			if speaker := strings.TrimSpace(asString(point.Payload["speaker"])); speaker != "" {
-				stats.BySpeaker[speaker]++
+				agg.bySpeaker[speaker]++
 			}
 			if project := strings.TrimSpace(asString(point.Payload["project"])); project != "" {
-				stats.ByProject[project]++
+				agg.byProject[project]++
 			}
-			if scanned < maxTitleSample {
-				scanned++
-				if title := strings.TrimSpace(asString(point.Payload["source_title"])); title != "" {
-					if _, seen := titleSeen[title]; !seen && len(titles) < maxDistinctTitles {
-						titleSeen[title] = struct{}{}
-						titles = append(titles, title)
-					}
-				}
+			if title := strings.TrimSpace(asString(point.Payload["source_title"])); title != "" {
+				titleCounts[title]++
+			}
+			if scanned >= maxSamplePoints {
+				break
 			}
 		}
 
@@ -665,18 +739,270 @@ func (s *QdrantMemoryStore) statsViaScroll(ctx context.Context, filters memory.S
 			break
 		}
 		nextOffsetRaw := fmt.Sprintf("%v", nextOffset)
-		if nextOffsetRaw == "" || nextOffsetRaw == lastOffset {
+		if nextOffsetRaw == "" || nextOffsetRaw == lastOffset || len(response.Result.Points) == 0 {
 			break
 		}
 		lastOffset = nextOffsetRaw
 		offset = nextOffset
-		if len(response.Result.Points) == 0 {
-			break
+	}
+
+	titles := make([]string, 0, len(titleCounts))
+	for title := range titleCounts {
+		titles = append(titles, title)
+	}
+	sort.SliceStable(titles, func(i, j int) bool {
+		if titleCounts[titles[i]] == titleCounts[titles[j]] {
+			return titles[i] < titles[j]
+		}
+		return titleCounts[titles[i]] > titleCounts[titles[j]]
+	})
+	if len(titles) > maxTitles {
+		titles = titles[:maxTitles]
+	}
+	agg.topTitles = titles
+	return agg, nil
+}
+
+func (s *QdrantMemoryStore) getCachedUnfilteredAggregation() (unfilteredAggregationCacheEntry, bool) {
+	if s.distinctCacheTTL <= 0 {
+		return unfilteredAggregationCacheEntry{}, false
+	}
+	s.unfilteredAggCacheMu.RLock()
+	entry, ok := s.unfilteredAggCacheByColl[s.collection]
+	s.unfilteredAggCacheMu.RUnlock()
+	if !ok || time.Now().After(entry.expiresAt) {
+		return unfilteredAggregationCacheEntry{}, false
+	}
+	return unfilteredAggregationCacheEntry{
+		byKind:    copyIntMap(entry.byKind),
+		bySpeaker: copyIntMap(entry.bySpeaker),
+		byProject: copyIntMap(entry.byProject),
+		topTitles: append([]string(nil), entry.topTitles...),
+	}, true
+}
+
+func (s *QdrantMemoryStore) setCachedUnfilteredAggregation(entry unfilteredAggregationCacheEntry) {
+	if s.distinctCacheTTL <= 0 {
+		return
+	}
+	s.unfilteredAggCacheMu.Lock()
+	s.unfilteredAggCacheByColl[s.collection] = unfilteredAggregationCacheEntry{
+		byKind:    copyIntMap(entry.byKind),
+		bySpeaker: copyIntMap(entry.bySpeaker),
+		byProject: copyIntMap(entry.byProject),
+		topTitles: append([]string(nil), entry.topTitles...),
+		expiresAt: time.Now().Add(s.distinctCacheTTL),
+	}
+	s.unfilteredAggCacheMu.Unlock()
+}
+
+func copyIntMap(source map[string]int) map[string]int {
+	copied := make(map[string]int, len(source))
+	for key, value := range source {
+		copied[key] = value
+	}
+	return copied
+}
+
+func (s *QdrantMemoryStore) aggregateDistinctFieldCounts(ctx context.Context, field string, filter map[string]any, limit int) (map[string]int, []string, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+
+	counts := make(map[string]int)
+	values, err := s.distinctFieldValues(ctx, field, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(values) == 0 {
+		return counts, nil, nil
+	}
+
+	for _, value := range values {
+		count, countErr := s.client.CountPointsEstimateWithFilter(ctx, s.collection, appendFilterMatch(filter, field, value))
+		if countErr != nil {
+			return nil, nil, countErr
+		}
+		if count > 0 {
+			counts[value] = count
 		}
 	}
 
-	stats.TopTitles = titles
-	return stats, nil
+	ordered := make([]string, 0, len(counts))
+	for value := range counts {
+		ordered = append(ordered, value)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if counts[ordered[i]] == counts[ordered[j]] {
+			return ordered[i] < ordered[j]
+		}
+		return counts[ordered[i]] > counts[ordered[j]]
+	})
+	if len(ordered) > limit {
+		ordered = ordered[:limit]
+	}
+
+	trimmed := make(map[string]int, len(ordered))
+	for _, value := range ordered {
+		trimmed[value] = counts[value]
+	}
+	s.rememberDistinctFieldValues(field, ordered)
+	return trimmed, ordered, nil
+}
+
+func (s *QdrantMemoryStore) distinctFieldValues(ctx context.Context, field string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	cacheKey := fmt.Sprintf("%s:%s", s.collection, strings.TrimSpace(field))
+	if values, ok := s.getDistinctFieldValues(cacheKey); ok {
+		if len(values) > limit {
+			return values[:limit], nil
+		}
+		return values, nil
+	}
+
+	const maxSamplePoints = 4096
+	const pageLimit = 256
+	seen := make(map[string]struct{})
+	values := make([]string, 0, limit)
+	var offset any
+	lastOffset := ""
+	scanned := 0
+
+	for scanned < maxSamplePoints && len(values) < limit {
+		body := map[string]any{
+			"limit":        pageLimit,
+			"with_payload": true,
+			"with_vector":  false,
+		}
+		if offset != nil {
+			body["offset"] = offset
+		}
+
+		var response struct {
+			Result struct {
+				Points []struct {
+					Payload map[string]any `json:"payload"`
+				} `json:"points"`
+				NextPageOffset any `json:"next_page_offset"`
+			} `json:"result"`
+		}
+
+		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/scroll", s.collection), body, &response)
+		if err != nil {
+			if status == http.StatusNotFound {
+				s.setDistinctFieldValues(cacheKey, values)
+				return values, nil
+			}
+			return nil, err
+		}
+
+		for _, point := range response.Result.Points {
+			scanned++
+			value := strings.TrimSpace(asString(point.Payload[field]))
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+			if len(values) >= limit {
+				break
+			}
+		}
+
+		nextOffset := response.Result.NextPageOffset
+		if nextOffset == nil {
+			break
+		}
+		nextOffsetRaw := fmt.Sprintf("%v", nextOffset)
+		if nextOffsetRaw == "" || nextOffsetRaw == lastOffset || len(response.Result.Points) == 0 {
+			break
+		}
+		lastOffset = nextOffsetRaw
+		offset = nextOffset
+	}
+
+	s.setDistinctFieldValues(cacheKey, values)
+	return values, nil
+}
+
+func (s *QdrantMemoryStore) getDistinctFieldValues(cacheKey string) ([]string, bool) {
+	if s.distinctCacheTTL <= 0 {
+		return nil, false
+	}
+	now := time.Now()
+	s.distinctCacheMu.RLock()
+	entry, ok := s.distinctFieldVals[cacheKey]
+	s.distinctCacheMu.RUnlock()
+	if !ok || now.After(entry.expiresAt) {
+		return nil, false
+	}
+	return append([]string(nil), entry.values...), true
+}
+
+func (s *QdrantMemoryStore) setDistinctFieldValues(cacheKey string, values []string) {
+	if s.distinctCacheTTL <= 0 {
+		return
+	}
+	copied := append([]string(nil), values...)
+	s.distinctCacheMu.Lock()
+	s.distinctFieldVals[cacheKey] = distinctFieldCacheEntry{values: copied, expiresAt: time.Now().Add(s.distinctCacheTTL)}
+	s.distinctCacheMu.Unlock()
+}
+
+func (s *QdrantMemoryStore) rememberDistinctFieldValues(field string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	s.setDistinctFieldValues(fmt.Sprintf("%s:%s", s.collection, strings.TrimSpace(field)), values)
+}
+
+func appendFilterMatch(filter map[string]any, key, value string) map[string]any {
+	condition := map[string]any{
+		"key": key,
+		"match": map[string]any{
+			"value": value,
+		},
+	}
+	if filter == nil {
+		return map[string]any{"must": []map[string]any{condition}}
+	}
+
+	cloned := cloneFilter(filter)
+	mustAny, ok := cloned["must"]
+	if !ok {
+		cloned["must"] = []map[string]any{condition}
+		return cloned
+	}
+
+	switch typed := mustAny.(type) {
+	case []map[string]any:
+		cloned["must"] = append(typed, condition)
+	case []any:
+		cloned["must"] = append(typed, condition)
+	default:
+		cloned["must"] = []map[string]any{condition}
+	}
+	return cloned
+}
+
+func cloneFilter(filter map[string]any) map[string]any {
+	if filter == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(filter)
+	if err != nil {
+		return map[string]any{}
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(encoded, &cloned); err != nil {
+		return map[string]any{}
+	}
+	return cloned
 }
 
 func (s *QdrantMemoryStore) DeleteByFilters(ctx context.Context, filters memory.SearchFilters) error {

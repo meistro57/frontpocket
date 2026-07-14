@@ -26,7 +26,7 @@ FrontPocket stores memory points with:
 - Proposed canon candidates live in a JSON review queue file (`FRONTPOCKET_PROPOSED_CANON_PATH`, default `data/proposed_canon.json`).
 - Search results may be cached for `SEARCH_CACHE_TTL_SECONDS`.
 - Session state can be saved/loaded through `POST /memory/session` and cleared through `DELETE /memory/session`.
-- Aggregate memory totals are exposed through `GET /memory/stats`.
+- Aggregate memory totals are exposed through `GET /memory/stats`, using Qdrant collection info/count APIs and cached distinct-field aggregation so large collections do not require full scans per request.
 - Collection vector size is validated against embedding output dimensions.
 
 ## Reflection readiness behavior

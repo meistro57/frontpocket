@@ -94,6 +94,9 @@ curl http://localhost:8088/openapi.json
 curl 'http://localhost:8088/memory/stats?project=FrontPocket'
 ```
 
+`/memory/stats` is optimized for large datasets, it uses Qdrant count/collection-info endpoints
+plus cached distinct-field aggregation instead of request-time full scans.
+
 ## 8) Save session state
 
 ```bash

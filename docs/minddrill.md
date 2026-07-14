@@ -156,12 +156,14 @@ server run.
 
 ## Request timeouts
 
-`GET /memory/stats` now uses a short frontend timeout and backend guardrails:
+`GET /memory/stats` now uses a short frontend timeout and a scan-free backend path:
 
 - **Frontend**: stats fetch uses an `AbortController` timeout of ~5s. On timeout/error, MindDrill
   shows a visible "stats unavailable" fallback with retry.
-- **Backend**: stats handler wraps its store call in a short timeout and serves a structured error
-  (or stale cached stats when available) instead of keeping the request open.
+- **Backend**: totals come from Qdrant collection info/count APIs, and distinct field groups come
+  from cached aggregation instead of per-request full collection scans.
+- **Fallback behavior**: if the backend still fails, the handler can return stale cached stats or
+  a structured error, rather than hanging the request.
 
 A single `POST /memory/chat` turn can make up to **two** sequential LLM calls — an optional
 query-refinement call when first-pass retrieval looks thin, followed by the answer-generation

@@ -628,6 +628,84 @@ func TestMemoryPointFromPayloadIncludesAIFields(t *testing.T) {
 	}
 }
 
+func TestStatsAvoidsFullScrollAndCachesDistinctValues(t *testing.T) {
+	scrollCalls := 0
+	collectionInfoCalls := 0
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
+			collectionInfoCalls++
+			_, _ = io.WriteString(w, `{"result":{"points_count":322000}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/facet":
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = io.WriteString(w, `{"status":{"error":"facet unavailable"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/points/scroll":
+			scrollCalls++
+			_, _ = io.WriteString(w, `{"result":{"points":[{"payload":{"memory_kind":"project_context","speaker":"user","project":"FrontPocket","source_title":"Title A"}},{"payload":{"memory_kind":"research_note","speaker":"assistant","project":"Notebook","source_title":"Title B"}}],"next_page_offset":null}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/points/count":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed reading count request: %v", err)
+			}
+			raw := string(body)
+			count := 0
+			switch {
+			case strings.Contains(raw, `"key":"memory_kind"`) && strings.Contains(raw, `"value":"project_context"`):
+				count = 210000
+			case strings.Contains(raw, `"key":"memory_kind"`) && strings.Contains(raw, `"value":"research_note"`):
+				count = 112000
+			case strings.Contains(raw, `"key":"speaker"`) && strings.Contains(raw, `"value":"user"`):
+				count = 200000
+			case strings.Contains(raw, `"key":"speaker"`) && strings.Contains(raw, `"value":"assistant"`):
+				count = 122000
+			case strings.Contains(raw, `"key":"project"`) && strings.Contains(raw, `"value":"FrontPocket"`):
+				count = 220000
+			case strings.Contains(raw, `"key":"project"`) && strings.Contains(raw, `"value":"Notebook"`):
+				count = 102000
+			case strings.Contains(raw, `"key":"source_title"`) && strings.Contains(raw, `"value":"Title A"`):
+				count = 123000
+			case strings.Contains(raw, `"key":"source_title"`) && strings.Contains(raw, `"value":"Title B"`):
+				count = 99000
+			default:
+				count = 0
+			}
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"result":{"count":%d}}`, count))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	memStore := NewQdrantMemoryStore(NewQdrantClient(qdrant.URL), nil, "frontpocket_test", "", "Cosine", nil)
+	memStore.distinctCacheTTL = time.Minute
+
+	first, err := memStore.Stats(context.Background(), memory.SearchFilters{})
+	if err != nil {
+		t.Fatalf("first stats call failed: %v", err)
+	}
+	second, err := memStore.Stats(context.Background(), memory.SearchFilters{})
+	if err != nil {
+		t.Fatalf("second stats call failed: %v", err)
+	}
+
+	if first.Total != 322000 || second.Total != 322000 {
+		t.Fatalf("expected total from collection info, got first=%d second=%d", first.Total, second.Total)
+	}
+	if scrollCalls != 1 {
+		t.Fatalf("expected one sampled aggregation scroll on first call only, got %d", scrollCalls)
+	}
+	if collectionInfoCalls != 2 {
+		t.Fatalf("expected collection info on both calls, got %d", collectionInfoCalls)
+	}
+	if first.ByKind["project_context"] != 1 || first.ByKind["research_note"] != 1 {
+		t.Fatalf("unexpected by_kind counts: %#v", first.ByKind)
+	}
+	if len(first.TopTitles) != 2 || first.TopTitles[0] != "Title A" {
+		t.Fatalf("unexpected top titles: %#v", first.TopTitles)
+	}
+}
+
 type testEmbedder struct {
 	embedText func(ctx context.Context, text string) ([]float32, error)
 }
