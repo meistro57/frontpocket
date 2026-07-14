@@ -4,6 +4,12 @@
 Client / Agent / Chat Bridge / MindDrill UI (browser)
         ↓
 FrontPocket Go HTTP API  (CORS-aware)
+
+External MCP Agent Runtime
+        ↓
+frontpocket mcp (stdio MCP bridge)
+        ↓
+FrontPocket Go HTTP API
         ↓
 Embedder (Ollama/OpenAI/OpenRouter)
         ↓
@@ -33,6 +39,7 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - FrontPocket corpus memory and MindDrill chat memory use separate Qdrant collections on the same Qdrant instance (`QDRANT_COLLECTION` and `MINDDRILL_MEMORY_COLLECTION`).
 - The API applies CORS as the outermost middleware (configured via `CORS_ALLOW_ORIGINS`), so browser clients can call it directly and `OPTIONS` preflight is handled before auth.
 - MindDrill is a separate, static browser UI (`cmd/minddrill`) that is purely an API client — it stores nothing itself and never bypasses the API boundary.
+- External agent runtimes can connect through `frontpocket mcp`, a stdio MCP bridge that exposes health/search/context-pack tools and still routes all calls through the API boundary.
 - MindDrill serves `GET /config.json` from its own origin to publish the configured FrontPocket API base URL (`--api`) at runtime, so the UI has no hardcoded backend URL.
 - MindDrill chat calls `POST /memory/chat`, which retrieves both memory layers and writes back through the Go API only.
 - The memory loop proposes canon candidates but never auto-promotes them; human review is required via CLI or API approve/reject/merge actions.

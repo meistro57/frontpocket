@@ -27,6 +27,7 @@ No crystal ball. Just retrieval with receipts.
 - **OpenAPI support:** served at `GET /openapi.json` for integrations.
 - **CORS middleware:** configurable allowed origins so browser apps can call the API directly without proxy hacks.
 - **MindDrill UI:** a built-in browser-based memory explorer with semantic search, context-pack, and browse modes. Served by a standalone `minddrill` binary on `:8089`. Includes dark mode toggle with localStorage persistence.
+- **MCP bridge for agents:** `frontpocket mcp` exposes source-backed retrieval tools (`frontpocket_search`, `frontpocket_context_pack`, `frontpocket_health`) over stdio MCP for external agent clients.
 - **Memory loop + canon review:** `frontpocket memory-loop` scans raw memory in batches, proposes source-backed canon candidates, and stores them in a review queue for approve/reject/merge workflows.
 - **Review APIs:** proposed canon review endpoints for listing candidates, approving into canonical memory, rejecting with reason, and merge tracking.
 - **Pre-reflection cleanup + reflection loop:** `python -m frontpocket.memory_cleanup` normalizes and validates raw memory into `fp_cleaned_memory`; `fp_reflect_loop.py` reads cleaned records by default and upserts findings into `fp_reflections`.
@@ -268,6 +269,28 @@ minddrill --api http://localhost:8088  # non-default API base URL
 
 Then open <http://localhost:8089> in your browser. Make sure FrontPocket is running and
 that `http://localhost:8089` is in `CORS_ALLOW_ORIGINS`.
+
+---
+
+## MCP server for external agents
+
+Use the built-in MCP stdio bridge so external agent runtimes can call FrontPocket retrieval
+without direct database access.
+
+```bash
+# defaults to http://localhost:8088
+frontpocket mcp
+
+# custom API target or auth header/key
+frontpocket mcp --api http://localhost:8088 \
+  --api-key-header X-FrontPocket-Key \
+  --api-key your-real-key
+```
+
+Exposed MCP tools:
+- `frontpocket_health`
+- `frontpocket_search`
+- `frontpocket_context_pack`
 
 ---
 

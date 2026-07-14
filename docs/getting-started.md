@@ -188,19 +188,35 @@ from its own origin and uses it to apply the `--api` target for all browser API 
 Ensure the MindDrill origin is listed in `CORS_ALLOW_ORIGINS`. See `docs/minddrill.md`
 for options.
 
-## 13) Run memory loop (dry-run)
+## 13) Expose MCP tools for external agents
+
+Run the MCP stdio bridge from the same machine as FrontPocket:
+
+```bash
+frontpocket mcp
+
+# optional overrides
+frontpocket mcp --api http://localhost:8088 \
+  --api-key-header X-FrontPocket-Key \
+  --api-key your-real-key
+```
+
+This exposes `frontpocket_health`, `frontpocket_search`, and
+`frontpocket_context_pack` to any MCP-compatible agent runtime.
+
+## 14) Run memory loop (dry-run)
 
 ```bash
 frontpocket memory-loop --batch-size 200 --dry-run
 ```
 
-## 14) Write proposed canon candidates
+## 15) Write proposed canon candidates
 
 ```bash
 frontpocket memory-loop --batch-size 200 --write-candidates
 ```
 
-## 15) Review queue from CLI
+## 16) Review queue from CLI
 
 ```bash
 frontpocket memory-loop list
@@ -209,7 +225,7 @@ frontpocket memory-loop reject --id cand_xxx --reason "insufficient evidence" --
 frontpocket memory-loop merge --id cand_xxx --target canon_abc --reviewed-by mark
 ```
 
-## 16) Review queue from API
+## 17) Review queue from API
 
 ```bash
 curl http://localhost:8088/memory/canon/proposed
@@ -218,7 +234,7 @@ curl -X POST http://localhost:8088/memory/canon/proposed/cand_xxx/approve \
   -d '{"reviewed_by":"mark"}'
 ```
 
-## 17) Run speaker-aware cleanup + reflection
+## 18) Run speaker-aware cleanup + reflection
 
 ```bash
 # cleanup/normalize raw memory into fp_cleaned_memory
@@ -239,7 +255,7 @@ Speaker-aware behavior in this pipeline:
 - Assistant technical chunks are classified `domain=technical` with `phase_applicability=not_applicable`.
 - Project hints can be inferred from `source_title` when project is empty; final project assignment remains manual/approved.
 
-## 18) Run tests
+## 19) Run tests
 
 > `./make_all.sh` builds both binaries into `bin/`. Always launch `./bin/frontpocket` and
 > `./bin/minddrill` from there — not a binary of the same name sitting in the repo root from

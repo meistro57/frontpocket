@@ -28,10 +28,13 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "memory-loop") || !strings.Contains(output, "Run source-backed memory curation and review workflows.") {
 		t.Fatalf("expected memory-loop command reference in help output, got:\n%s", output)
 	}
+	if !strings.Contains(output, "mcp") || !strings.Contains(output, "Expose FrontPocket search tools over MCP for external agents.") {
+		t.Fatalf("expected mcp command reference in help output, got:\n%s", output)
+	}
 	if !strings.Contains(output, "Subcommands:") || !strings.Contains(output, "ingest chatgpt      Import from a ChatGPT export zip or folder.") || !strings.Contains(output, "ingest claude       Import from a Claude export folder.") {
 		t.Fatalf("expected subcommand reference in help output, got:\n%s", output)
 	}
-	if !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket ingest claude --help") || !strings.Contains(output, "frontpocket minddrill --help") || !strings.Contains(output, "frontpocket memory-loop --help") {
+	if !strings.Contains(output, "frontpocket ingest --help") || !strings.Contains(output, "frontpocket ingest claude --help") || !strings.Contains(output, "frontpocket minddrill --help") || !strings.Contains(output, "frontpocket memory-loop --help") || !strings.Contains(output, "frontpocket mcp --help") {
 		t.Fatalf("expected nested help references in help output, got:\n%s", output)
 	}
 }

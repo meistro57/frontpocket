@@ -18,4 +18,5 @@ Operational endpoints (keep private or trusted-only):
 Admin and mutation endpoints should remain private.
 
 The service now exposes `/openapi.json` for schema discovery and Action wiring.
+For local external agent integrations, `frontpocket mcp` provides a stdio MCP bridge that maps to the same read-focused API endpoints.
 Chat-export ingest supports attachment-aware records so recall can cite attachment refs in source-backed responses.
