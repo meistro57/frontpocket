@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -290,14 +291,39 @@ func firstSourceQuote(quotes []string) string {
 }
 
 func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.memoryStore.Stats(r.Context(), statsFiltersFromQuery(r))
+	filters := statsFiltersFromQuery(r)
+	cacheKey := s.memoryStatsCacheKey(filters)
+	if stats, ok := s.getCachedMemoryStats(cacheKey); ok {
+		writeJSON(w, http.StatusOK, stats)
+		return
+	}
+
+	// Bound stats lookups so a slow backend cannot hold this request open indefinitely.
+	statsCtx, cancel := context.WithTimeout(r.Context(), s.statsQueryTimeout)
+	defer cancel()
+	stats, err := s.memoryStore.Stats(statsCtx, filters)
 	if err != nil {
+		if staleStats, ok := s.getStaleMemoryStats(cacheKey); ok {
+			writeJSON(w, http.StatusOK, staleStats)
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(statsCtx.Err(), context.DeadlineExceeded) {
+			writeError(w, http.StatusGatewayTimeout, memory.ErrorBody{
+				Code:    "STATS_TIMEOUT",
+				Message: "Memory stats lookup timed out.",
+				Detail:  err.Error(),
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "STATS_FAILED",
 			Message: "Memory stats lookup failed.",
 			Detail:  err.Error(),
 		})
 		return
+	}
+	if s.statsCacheTTL > 0 {
+		s.setCachedMemoryStats(cacheKey, stats)
 	}
 	writeJSON(w, http.StatusOK, stats)
 }
@@ -590,6 +616,50 @@ func (s *Server) searchResultCacheKey(req memory.SearchRequest) string {
 	encoded, _ := json.Marshal(req)
 	sum := sha256.Sum256(encoded)
 	return fmt.Sprintf("%s:search:%s", prefix, hex.EncodeToString(sum[:]))
+}
+
+func (s *Server) memoryStatsCacheKey(filters memory.SearchFilters) string {
+	prefix := s.searchCacheKey
+	if prefix == "" {
+		prefix = "frontpocket"
+	}
+	encoded, _ := json.Marshal(filters)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%s:stats:%s", prefix, hex.EncodeToString(sum[:]))
+}
+
+func (s *Server) getCachedMemoryStats(cacheKey string) (memory.MemoryStats, bool) {
+	if s.statsCacheTTL <= 0 {
+		return memory.MemoryStats{}, false
+	}
+	now := time.Now()
+	s.statsCacheMu.RLock()
+	entry, ok := s.statsCache[cacheKey]
+	s.statsCacheMu.RUnlock()
+	if !ok || now.After(entry.expiresAt) {
+		return memory.MemoryStats{}, false
+	}
+	return entry.stats, true
+}
+
+func (s *Server) getStaleMemoryStats(cacheKey string) (memory.MemoryStats, bool) {
+	s.statsCacheMu.RLock()
+	entry, ok := s.statsCache[cacheKey]
+	s.statsCacheMu.RUnlock()
+	if !ok {
+		return memory.MemoryStats{}, false
+	}
+	return entry.stats, true
+}
+
+func (s *Server) setCachedMemoryStats(cacheKey string, stats memory.MemoryStats) {
+	if s.statsCacheTTL <= 0 {
+		return
+	}
+	s.statsCacheMu.Lock()
+	// Keep a short-lived in-process cache so repeated stats requests do not recompute.
+	s.statsCache[cacheKey] = memoryStatsCacheEntry{stats: stats, expiresAt: time.Now().Add(s.statsCacheTTL)}
+	s.statsCacheMu.Unlock()
 }
 
 func (s *Server) sessionStateKey(sessionID string) string {

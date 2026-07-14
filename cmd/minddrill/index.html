@@ -652,6 +652,7 @@ a:hover { text-decoration: underline; }
       </div>
       <div class="stat-links" id="kind-links"></div>
       <div class="stat-links" id="project-links"></div>
+      <div id="stats-fallback" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
     </div>
 
     <div>
@@ -822,6 +823,14 @@ let lastContextPackData = null;
 let lastContextPackQuery = '';
 let statsKinds = [];
 let statsProjects = [];
+let statsLoaded = false;
+let statsFailed = false;
+const fallbackProbes = [
+  'recent project decisions',
+  'open questions',
+  'action items',
+  'critical user preferences',
+];
 let renderedSearchItems = [];
 let renderedBrowseItems = [];
 let searchRequestId = 0;
@@ -1051,9 +1060,11 @@ async function checkHealth() {
 }
 
 async function loadStats() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
   try {
-    const r = await fetch(apiURL('/memory/stats'));
-    if (!r.ok) return;
+    const r = await fetch(apiURL('/memory/stats'), { signal: controller.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     // Keep stats interactive so users can jump straight to browse filters.
     const byKind = d.by_kind && typeof d.by_kind === 'object' ? d.by_kind : {};
@@ -1071,12 +1082,46 @@ async function loadStats() {
     populateBrowseSelect('browse-kind', 'all kinds', statsKinds);
     populateBrowseSelect('browse-project', 'all projects', statsProjects);
 
+    statsLoaded = true;
+    statsFailed = false;
+    renderStatsFallback('');
+
     const titles = Array.isArray(d.top_titles) ? d.top_titles.filter(Boolean) : [];
-    if (titles.length) {
-      probes = titles;
-      buildProbes();
-    }
-  } catch {}
+    probes = titles.length ? titles : fallbackProbes.slice();
+    buildProbes();
+  } catch (err) {
+    // Fail closed after 5s so the UI never stays in indefinite loading placeholders.
+    statsLoaded = false;
+    statsFailed = true;
+    setStatsPlaceholders();
+    const timedOut = err && err.name === 'AbortError';
+    renderStatsFallback(timedOut ? 'stats unavailable (timeout).' : 'stats unavailable.');
+    probes = fallbackProbes.slice();
+    buildProbes();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function setStatsPlaceholders() {
+  document.getElementById('s-points').textContent = '—';
+  document.getElementById('s-speakers').textContent = '—';
+  document.getElementById('s-kinds').textContent = '—';
+  document.getElementById('s-projects').textContent = '—';
+  renderStatLinks('kind-links', [], value => applyBrowseFilter('kind', value));
+  renderStatLinks('project-links', [], value => applyBrowseFilter('project', value));
+  populateBrowseSelect('browse-kind', 'all kinds', []);
+  populateBrowseSelect('browse-project', 'all projects', []);
+}
+
+function renderStatsFallback(message) {
+  const fallback = document.getElementById('stats-fallback');
+  if (!message) {
+    fallback.innerHTML = '';
+    return;
+  }
+  // Give users a direct retry affordance when stats fail or time out.
+  fallback.innerHTML = `${esc(message)} <button class="btn btn-sm" style="margin-left:6px" onclick="loadStats()">retry</button>`;
 }
 
 function renderStatLinks(containerId, values, onClick) {
@@ -1143,7 +1188,11 @@ function buildProbes() {
   const el = document.getElementById('probe-list');
   el.innerHTML = '';
   if (!probes.length) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">probes will appear once memory stats load…</div>';
+    if (statsFailed) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--text3)">probe suggestions unavailable. <button class="btn btn-sm" onclick="loadStats()">retry</button></div>';
+      return;
+    }
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3)">loading probe suggestions…</div>';
     return;
   }
   probes.forEach(p => {

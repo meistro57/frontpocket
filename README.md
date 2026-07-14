@@ -255,7 +255,7 @@ embedded in the `minddrill` binary via `//go:embed`.
 - Optional duplicate grouping in search and browse (default on) with expandable `×N similar` clusters
 - Context pack builder with copy-as-JSON / copy-as-Markdown and collapsible payload output
 - Browse mode with load-more pagination and explicit filters (speaker, kind, project, AI provider, feedback, starred/shared/has-image)
-- Corpus stats panel (total memories, speakers, kinds, projects) with clickable kind/project shortcuts into browse
+- Corpus stats panel (total memories, speakers, kinds, projects) with clickable kind/project shortcuts into browse, 5s timeout fallback, and retry action
 - Dark mode toggle with localStorage persistence
 - Search history sidebar
 - Quick probes generated from corpus titles (via `/memory/stats`)

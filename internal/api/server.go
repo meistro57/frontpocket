@@ -34,10 +34,19 @@ type Server struct {
 	minSearchScore    float64
 	searchCacheTTL    time.Duration
 	searchCacheKey    string
+	statsCacheTTL     time.Duration
+	statsQueryTimeout time.Duration
+	statsCacheMu      sync.RWMutex
+	statsCache        map[string]memoryStatsCacheEntry
 	sessionFallbackMu sync.RWMutex
 	sessionFallback   map[string]memory.SessionState
 	defaultSessionTTL time.Duration
 	reviewQueue       *memoryloop.FileReviewQueue
+}
+
+type memoryStatsCacheEntry struct {
+	stats     memory.MemoryStats
+	expiresAt time.Time
 }
 
 func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -119,6 +128,9 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		minSearchScore:    cfg.Search.MinScore,
 		searchCacheTTL:    time.Duration(cfg.Search.CacheTTLSeconds) * time.Second,
 		searchCacheKey:    strings.TrimSpace(cfg.Redis.KeyPrefix),
+		statsCacheTTL:     45 * time.Second,
+		statsQueryTimeout: 4 * time.Second,
+		statsCache:        make(map[string]memoryStatsCacheEntry),
 		sessionFallback:   make(map[string]memory.SessionState),
 		defaultSessionTTL: time.Hour,
 		reviewQueue:       memoryloop.NewFileReviewQueue(queuePath),

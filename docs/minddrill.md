@@ -71,11 +71,13 @@ MindDrill is a thin client over the FrontPocket API:
 ## Quick probes
 
 The sidebar's "quick probes" are generated dynamically from the corpus, not hardcoded. On load,
-MindDrill calls `GET /memory/stats`, which returns a `top_titles` field — a sample of distinct
-`source_title` values pulled from the corpus (capped at 60 titles, sampled from up to 4,000
-points). The sidebar renders these as clickable probe buttons. This means every FrontPocket
-install shows probes relevant to that user's own corpus, with no user-specific content shipped in
-the public repo.
+MindDrill calls `GET /memory/stats`, which returns a `top_titles` field (up to 60 distinct
+`source_title` values). The sidebar renders these as clickable probe buttons. This means every
+FrontPocket install shows probes relevant to that user's own corpus, with no user-specific
+content shipped in the public repo.
+
+If stats are unavailable, MindDrill now falls back to a small static probe list and shows an
+inline retry control instead of leaving the panel stuck in a perpetual loading message.
 
 ## Rendering stability and duplicate control
 
@@ -153,6 +155,13 @@ restarts, rather than only living in the in-process fallback store for the lifet
 server run.
 
 ## Request timeouts
+
+`GET /memory/stats` now uses a short frontend timeout and backend guardrails:
+
+- **Frontend**: stats fetch uses an `AbortController` timeout of ~5s. On timeout/error, MindDrill
+  shows a visible "stats unavailable" fallback with retry.
+- **Backend**: stats handler wraps its store call in a short timeout and serves a structured error
+  (or stale cached stats when available) instead of keeping the request open.
 
 A single `POST /memory/chat` turn can make up to **two** sequential LLM calls — an optional
 query-refinement call when first-pass retrieval looks thin, followed by the answer-generation

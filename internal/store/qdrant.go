@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -62,12 +63,6 @@ func (c *QdrantClient) Health(ctx context.Context) error {
 }
 
 func (c *QdrantClient) CountPoints(ctx context.Context, collection string, payloadEquals map[string]string) (int, error) {
-	trimmedCollection := strings.TrimSpace(collection)
-	if trimmedCollection == "" {
-		return 0, fmt.Errorf("QDRANT_COLLECTION is required")
-	}
-
-	body := map[string]any{"exact": true}
 	must := make([]map[string]any, 0, len(payloadEquals))
 	for key, value := range payloadEquals {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
@@ -80,8 +75,21 @@ func (c *QdrantClient) CountPoints(ctx context.Context, collection string, paylo
 			},
 		})
 	}
-	if len(must) > 0 {
-		body["filter"] = map[string]any{"must": must}
+	if len(must) == 0 {
+		return c.CountPointsWithFilter(ctx, collection, nil)
+	}
+	return c.CountPointsWithFilter(ctx, collection, map[string]any{"must": must})
+}
+
+func (c *QdrantClient) CountPointsWithFilter(ctx context.Context, collection string, filter map[string]any) (int, error) {
+	trimmedCollection := strings.TrimSpace(collection)
+	if trimmedCollection == "" {
+		return 0, fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+
+	body := map[string]any{"exact": true}
+	if filter != nil {
+		body["filter"] = filter
 	}
 
 	var response struct {
@@ -92,14 +100,112 @@ func (c *QdrantClient) CountPoints(ctx context.Context, collection string, paylo
 	status, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/count", trimmedCollection), body, &response)
 	if err != nil {
 		if status == http.StatusNotFound {
-			// Collection doesn't exist yet — a perfectly valid starting point
-			// (a genuinely fresh ingest, or a just-wiped collection), not a
-			// real failure. Zero points is the correct, honest baseline.
 			return 0, nil
 		}
 		return 0, err
 	}
 	return response.Result.Count, nil
+}
+
+type qdrantFacetHit struct {
+	Value string
+	Count int
+}
+
+func (c *QdrantClient) FacetCounts(ctx context.Context, collection, key string, filter map[string]any, limit int) ([]qdrantFacetHit, error) {
+	trimmedCollection := strings.TrimSpace(collection)
+	trimmedKey := strings.TrimSpace(key)
+	if trimmedCollection == "" {
+		return nil, fmt.Errorf("QDRANT_COLLECTION is required")
+	}
+	if trimmedKey == "" {
+		return nil, fmt.Errorf("facet key is required")
+	}
+	if limit <= 0 {
+		limit = 64
+	}
+
+	body := map[string]any{
+		"key":   trimmedKey,
+		"limit": limit,
+	}
+	if filter != nil {
+		body["filter"] = filter
+	}
+
+	var response struct {
+		Result any `json:"result"`
+	}
+	status, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/facet", trimmedCollection), body, &response)
+	if err != nil {
+		if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+			return nil, fmt.Errorf("facet_unavailable")
+		}
+		return nil, err
+	}
+
+	hits := normalizeFacetResult(response.Result)
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Count == hits[j].Count {
+			return hits[i].Value < hits[j].Value
+		}
+		return hits[i].Count > hits[j].Count
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+func normalizeFacetResult(raw any) []qdrantFacetHit {
+	result := make([]qdrantFacetHit, 0)
+	seen := make(map[string]struct{})
+	var walk func(any)
+	walk = func(node any) {
+		switch typed := node.(type) {
+		case map[string]any:
+			value, hasValue := typed["value"]
+			count, hasCount := parseFacetCount(typed["count"])
+			if hasValue && hasCount {
+				name := strings.TrimSpace(fmt.Sprintf("%v", value))
+				if name != "" {
+					if _, ok := seen[name]; !ok {
+						seen[name] = struct{}{}
+						result = append(result, qdrantFacetHit{Value: name, Count: count})
+					}
+				}
+				return
+			}
+			for _, value := range typed {
+				walk(value)
+			}
+		case []any:
+			for _, value := range typed {
+				walk(value)
+			}
+		}
+	}
+	walk(raw)
+	return result
+}
+
+func parseFacetCount(raw any) (int, bool) {
+	switch typed := raw.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
 }
 
 func (c *QdrantClient) doJSON(ctx context.Context, method, path string, payload any, out any) (int, error) {
@@ -442,8 +548,59 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 		BySpeaker: make(map[string]int),
 		ByProject: make(map[string]int),
 	}
+	filter := toQdrantFilter(filters)
 
-	const maxTitleSample = 4000 // cap how many points we scroll for title sampling, large corpora can have 100k+
+	// Use Qdrant's lightweight count endpoint so large collections do not require scroll scans.
+	total, err := s.client.CountPointsWithFilter(ctx, s.collection, filter)
+	if err == nil {
+		stats.Total = total
+	}
+
+	// Use facet endpoints for grouped counts; this avoids per-request full collection scans.
+	kindHits, kindErr := s.client.FacetCounts(ctx, s.collection, "memory_kind", filter, 128)
+	speakerHits, speakerErr := s.client.FacetCounts(ctx, s.collection, "speaker", filter, 32)
+	projectHits, projectErr := s.client.FacetCounts(ctx, s.collection, "project", filter, 512)
+	titleHits, titleErr := s.client.FacetCounts(ctx, s.collection, "source_title", filter, 60)
+	if err == nil && kindErr == nil && speakerErr == nil && projectErr == nil && titleErr == nil {
+		for _, hit := range kindHits {
+			stats.ByKind[hit.Value] = hit.Count
+		}
+		for _, hit := range speakerHits {
+			stats.BySpeaker[hit.Value] = hit.Count
+		}
+		for _, hit := range projectHits {
+			stats.ByProject[hit.Value] = hit.Count
+		}
+		for _, hit := range titleHits {
+			stats.TopTitles = append(stats.TopTitles, hit.Value)
+		}
+		return stats, nil
+	}
+
+	legacyStats, legacyErr := s.statsViaScroll(ctx, filters)
+	if legacyErr == nil {
+		if legacyStats.Total == 0 && s.fallback != nil {
+			return s.fallback.Stats(ctx, filters)
+		}
+		return legacyStats, nil
+	}
+	if s.fallback != nil {
+		return s.fallback.Stats(ctx, filters)
+	}
+	if err != nil {
+		return memory.MemoryStats{}, err
+	}
+	return memory.MemoryStats{}, legacyErr
+}
+
+func (s *QdrantMemoryStore) statsViaScroll(ctx context.Context, filters memory.SearchFilters) (memory.MemoryStats, error) {
+	stats := memory.MemoryStats{
+		ByKind:    make(map[string]int),
+		BySpeaker: make(map[string]int),
+		ByProject: make(map[string]int),
+	}
+
+	const maxTitleSample = 4000
 	const maxDistinctTitles = 60
 	titleSeen := make(map[string]struct{})
 	titles := make([]string, 0, maxDistinctTitles)
@@ -476,13 +633,7 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/scroll", s.collection), body, &response)
 		if err != nil {
 			if status == http.StatusNotFound {
-				if s.fallback != nil {
-					return s.fallback.Stats(ctx, filters)
-				}
 				return memory.MemoryStats{}, nil
-			}
-			if s.fallback != nil {
-				return s.fallback.Stats(ctx, filters)
 			}
 			return memory.MemoryStats{}, err
 		}
@@ -524,12 +675,7 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 		}
 	}
 
-	if stats.Total == 0 && s.fallback != nil {
-		return s.fallback.Stats(ctx, filters)
-	}
-
 	stats.TopTitles = titles
-
 	return stats, nil
 }
 
