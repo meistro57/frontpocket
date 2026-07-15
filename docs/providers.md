@@ -52,7 +52,8 @@ That indicates Qdrant rejected a non-UUID point ID on insert. Current FrontPocke
 
 - `OPENAI_API_KEY` is required when `EMBEDDING_PROVIDER=openai`.
 - `OPENROUTER_API_KEY` is required when `EMBEDDING_PROVIDER=openrouter`.
-- `OPENROUTER_API_KEY` is also required when `CHAT_PROVIDER=openrouter`, including DeepSeek chat models such as `deepseek/deepseek-chat-v3-0324`.
+- `OPENROUTER_API_KEY` is required when `CHAT_PROVIDER=openrouter`.
+- For DeepSeek chat, use `CHAT_PROVIDER=openai` with `OPENAI_BASE_URL=https://api.deepseek.com/v1` and a DeepSeek API key (see https://api-docs.deepseek.com/).
 
 ## Vision captioning (ChatGPT attachment ingest)
 

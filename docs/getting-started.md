@@ -37,12 +37,14 @@ FRONTPOCKET_PROPOSED_CANON_PATH=data/proposed_canon.json
 ```
 
 To enable generated chat answers (instead of the retrieval-only fallback that just lists
-memory hits as text), set a chat provider. OpenRouter is the simplest path if you're already
-using it for embeddings:
+memory hits as text), set a chat provider. For DeepSeek, use the official API
+(https://api-docs.deepseek.com/) via the OpenAI-compatible provider settings:
 
 ```env
-CHAT_PROVIDER=openrouter
-OPENROUTER_CHAT_MODEL=deepseek/deepseek-chat-v3-0324
+CHAT_PROVIDER=openai
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_CHAT_MODEL=deepseek-chat
+OPENAI_API_KEY=your-deepseek-api-key
 ```
 
 With `CHAT_PROVIDER=none` (the default), `/memory/chat` still works but returns a templated
