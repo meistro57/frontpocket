@@ -70,6 +70,9 @@ type ChatConfig struct {
 	OllamaModel     string
 	OpenAIModel     string
 	OpenRouterModel string
+	DeepSeekKey     string
+	DeepSeekBaseURL string
+	DeepSeekModel   string
 }
 
 // VisionConfig configures the image-captioning call used to resolve
@@ -172,6 +175,9 @@ func Load() (Config, error) {
 			OllamaModel:     getEnv("OLLAMA_CHAT_MODEL", "llama3.1"),
 			OpenAIModel:     getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
 			OpenRouterModel: getEnv("OPENROUTER_CHAT_MODEL", "google/gemma-4-31b-it"),
+			DeepSeekKey:     getEnv("DEEPSEEK_API_KEY", ""),
+			DeepSeekBaseURL: getEnv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+			DeepSeekModel:   getEnv("DEEPSEEK_CHAT_MODEL", "deepseek-chat"),
 		},
 		Vision: VisionConfig{
 			Model: getEnv("VISION_MODEL", "google/gemini-2.5-flash"),
@@ -284,12 +290,23 @@ func (c Config) Validate() error {
 
 	switch c.Chat.Provider {
 	case "none", "":
+	case "ollama":
+		if strings.TrimSpace(c.Chat.OllamaModel) == "" {
+			return errors.New("OLLAMA_CHAT_MODEL is required when CHAT_PROVIDER=ollama")
+		}
 	case "openrouter":
 		if strings.TrimSpace(c.Embedding.OpenRouterKey) == "" {
 			return errors.New("OPENROUTER_API_KEY is required when CHAT_PROVIDER=openrouter")
 		}
 		if strings.TrimSpace(c.Chat.OpenRouterModel) == "" {
 			return errors.New("OPENROUTER_CHAT_MODEL is required when CHAT_PROVIDER=openrouter")
+		}
+	case "deepseek":
+		if strings.TrimSpace(c.Chat.DeepSeekKey) == "" {
+			return errors.New("DEEPSEEK_API_KEY is required when CHAT_PROVIDER=deepseek")
+		}
+		if strings.TrimSpace(c.Chat.DeepSeekModel) == "" {
+			return errors.New("DEEPSEEK_CHAT_MODEL is required when CHAT_PROVIDER=deepseek")
 		}
 	default:
 		return fmt.Errorf("unsupported CHAT_PROVIDER: %s", c.Chat.Provider)

@@ -228,6 +228,11 @@ func selectChatClient(cfg config.Config) (chat.Client, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Chat.Provider)) {
 	case "none", "":
 		return nil, nil
+	case "ollama":
+		return chat.NewOllamaChatClient(
+			cfg.Embedding.OllamaBaseURL,
+			cfg.Chat.OllamaModel,
+		), nil
 	case "openrouter":
 		return chat.NewOpenRouterClient(
 			cfg.Embedding.OpenRouterURL,
@@ -235,6 +240,12 @@ func selectChatClient(cfg config.Config) (chat.Client, error) {
 			cfg.Embedding.OpenRouterKey,
 			cfg.Embedding.OpenRouterSite,
 			cfg.Embedding.OpenRouterApp,
+		), nil
+	case "deepseek":
+		return chat.NewDeepSeekClient(
+			cfg.Chat.DeepSeekBaseURL,
+			cfg.Chat.DeepSeekModel,
+			cfg.Chat.DeepSeekKey,
 		), nil
 	default:
 		return nil, fmt.Errorf("unsupported CHAT_PROVIDER for /memory/chat: %s", cfg.Chat.Provider)
