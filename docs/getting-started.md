@@ -42,7 +42,7 @@ using it for embeddings:
 
 ```env
 CHAT_PROVIDER=openrouter
-OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-4.6
+OPENROUTER_CHAT_MODEL=deepseek/deepseek-chat-v3-0324
 ```
 
 With `CHAT_PROVIDER=none` (the default), `/memory/chat` still works but returns a templated
