@@ -29,8 +29,8 @@ func TestLocalOllamaGemma4Acceptance(t *testing.T) {
 		t.Fatalf("config.Load failed: %v", err)
 	}
 
-	if cfg.Chat.Provider != "ollama" || cfg.Chat.OllamaModel != "gemma4:12b" {
-		t.Skipf("Skipping local test, chat provider is %s / %s", cfg.Chat.Provider, cfg.Chat.OllamaModel)
+	if cfg.Chat.Provider != "ollama" || cfg.Embedding.Provider != "ollama" || cfg.Chat.OllamaModel != "gemma4:12b" {
+		t.Skipf("Skipping local test, chat provider is %s / %s, embed provider is %s", cfg.Chat.Provider, cfg.Chat.OllamaModel, cfg.Embedding.Provider)
 	}
 
 	srv, err := api.NewServer(cfg, logfp.NewDiscard())
