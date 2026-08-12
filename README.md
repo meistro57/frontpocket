@@ -94,6 +94,10 @@ POST /memory/context-pack
 
 ## Quick start
 
+**Fastest path:** clone, then run `./setup.sh` — it copies `.env.example` to `.env` (if missing), provisions Qdrant + Redis (only if not already running), and builds both binaries. Skip to step 4 once it finishes.
+
+Otherwise, the steps below give you full control over each part:
+
 ### 1) Configure
 
 ```bash

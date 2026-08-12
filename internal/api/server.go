@@ -16,6 +16,9 @@ import (
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/memoryloop"
 	"github.com/meistro57/frontpocket/internal/store"
+	"github.com/meistro57/frontpocket/internal/tools"
+	"github.com/meistro57/loadout"
+	"github.com/meistro57/loadout/mcp"
 )
 
 type Server struct {
@@ -42,6 +45,8 @@ type Server struct {
 	sessionFallback   map[string]memory.SessionState
 	defaultSessionTTL time.Duration
 	reviewQueue       *memoryloop.FileReviewQueue
+	toolRegistry      *loadout.Registry
+	mcpManager        *mcp.Manager
 }
 
 type memoryStatsCacheEntry struct {
@@ -112,6 +117,56 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		queuePath = "data/proposed_canon.json"
 	}
 
+	toolRegistry := loadout.NewRegistry()
+	toolRegistry.Register(tools.NewMemorySearchTool(
+		"search_source_memory",
+		"Search FrontPocket's source-backed memory archive (imported chats and documents) for a specific topic, project, or theme. The context you were already given is a first-pass similarity sample — use this to dig further with a sharper, self-chosen query.",
+		memStore,
+		8, 20,
+	))
+	if cfg.MindDrillMemory.Enabled {
+		toolRegistry.Register(tools.NewMemorySearchTool(
+			"search_chat_history",
+			"Search prior MindDrill chat history — this assistant's own conversation memory — for a specific past exchange or topic.",
+			mindDrillStore,
+			8, 20,
+		))
+	}
+	toolRegistry.Register(loadout.NewTavilyWebSearchTool(cfg.Tools.TavilyAPIKey))
+
+	// MCP servers are spawned with a background context, not a short-lived
+	// startup one: Client.Start ties the subprocess's lifetime to the context
+	// it's given, so a context that gets cancelled right after startup would
+	// kill the server the moment NewServer returns. Shutdown instead happens
+	// explicitly via mcpManager.Close() in Run(). Known gap: the initialize
+	// handshake in mcp.Client has no read timeout, so a hung MCP server would
+	// hang startup rather than being skipped — acceptable for now since both
+	// configured servers are known-working local binaries, but worth fixing
+	// if a flakier server gets added later.
+	var mcpConfigs []mcp.ServerConfig
+	if p := strings.TrimSpace(cfg.Tools.KaeMCPPath); p != "" {
+		mcpConfigs = append(mcpConfigs, mcp.ServerConfig{Name: "kae", Command: p})
+	}
+	if p := strings.TrimSpace(cfg.Tools.FrontpocketMCPPath); p != "" {
+		mcpConfigs = append(mcpConfigs, mcp.ServerConfig{
+			Name:    "frontpocket",
+			Command: strings.TrimSpace(cfg.Tools.FrontpocketMCPPython),
+			Args:    []string{p},
+		})
+	}
+	mcpManager := mcp.NewManager(context.Background(), mcpConfigs, logger)
+	for _, t := range mcpManager.Tools(context.Background()) {
+		toolRegistry.Register(t)
+	}
+	logger.Info("loadout ready", "tool_count", toolRegistry.Len())
+	logger.Info("active configuration",
+		"chat_provider", cfg.Chat.Provider,
+		"chat_model", chatModelName(cfg),
+		"embedding_provider", cfg.Embedding.Provider,
+		"embedding_model", embeddingModel(cfg),
+		"embedding_dimensions", cfg.Embedding.Dimensions,
+	)
+
 	s := &Server{
 		cfg:               cfg,
 		logger:            logger,
@@ -134,6 +189,8 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		sessionFallback:   make(map[string]memory.SessionState),
 		defaultSessionTTL: time.Hour,
 		reviewQueue:       memoryloop.NewFileReviewQueue(queuePath),
+		toolRegistry:      toolRegistry,
+		mcpManager:        mcpManager,
 	}
 
 	s.registerRoutes()
@@ -170,6 +227,9 @@ func (s *Server) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
+		if s.mcpManager != nil {
+			s.mcpManager.Close()
+		}
 	}()
 
 	s.logger.Info("starting server", "addr", server.Addr)
@@ -249,5 +309,20 @@ func selectChatClient(cfg config.Config) (chat.Client, error) {
 		), nil
 	default:
 		return nil, fmt.Errorf("unsupported CHAT_PROVIDER for /memory/chat: %s", cfg.Chat.Provider)
+	}
+}
+
+func chatModelName(cfg config.Config) string {
+	switch strings.ToLower(strings.TrimSpace(cfg.Chat.Provider)) {
+	case "ollama":
+		return strings.TrimSpace(cfg.Chat.OllamaModel)
+	case "openai":
+		return strings.TrimSpace(cfg.Chat.OpenAIModel)
+	case "openrouter":
+		return strings.TrimSpace(cfg.Chat.OpenRouterModel)
+	case "deepseek":
+		return strings.TrimSpace(cfg.Chat.DeepSeekModel)
+	default:
+		return "none"
 	}
 }

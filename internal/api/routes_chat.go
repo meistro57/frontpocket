@@ -15,6 +15,7 @@ import (
 	"github.com/meistro57/frontpocket/internal/config"
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/store"
+	"github.com/meistro57/loadout"
 )
 
 // chatRequestTimeout bounds the whole chat request — including the up-to-two
@@ -297,6 +298,12 @@ func mergeSearchResults(a, b []memory.SearchResult, limit int) []memory.SearchRe
 	return merged
 }
 
+// maxToolIterations caps how many times generateChatAnswer will round-trip
+// through the model after a tool call before giving up. Each iteration is a
+// full chat-completion call, so this also bounds worst-case latency/cost for
+// one chat turn.
+const maxToolIterations = 5
+
 func (s *Server) generateChatAnswer(ctx context.Context, message, systemPrompt, contextPack string, mind, front []memory.SearchResult) (string, string, string, error) {
 	provider, model := chatProviderModel(s.cfg.Chat)
 	if s.chatClient == nil {
@@ -306,24 +313,45 @@ func (s *Server) generateChatAnswer(ctx context.Context, message, systemPrompt, 
 	baseSystemPrompt := "You are MindDrill's chat assistant, helping the user explore and reason over their FrontPocket memory archive. Answer with the retrieved memory context only when relevant. Be direct, source-aware, and explicit when memory is missing or uncertain. Do not claim remembered facts unless they appear in the supplied memory sections. " +
 		"IMPORTANT: the retrieved memory sections are a SIMILARITY SAMPLE, not an exhaustive dataset — they are the small number of chunks closest in meaning to the user's message, drawn from a much larger corpus. If the user asks something that requires an exhaustive count, complete list, or 'how many X exist', say plainly that vector retrieval cannot answer that reliably (it samples by similarity, not completeness), and suggest they use the search or browse tools with a narrower query instead of guessing a number. " +
 		"FOLLOW-UP SUGGESTIONS: when it's natural to offer the user a few directions to dig further (which is often, given this is an exploratory memory tool), end your reply with a final line starting with exactly 'SUGGESTIONS:' followed by 2-4 short follow-up prompts separated by ' | '. Each suggestion should be phrased as something the user could literally click and send as-is (first person, e.g. 'tell me more about the marriage thread', not 'the marriage thread'). Keep each suggestion under 8 words. Omit the SUGGESTIONS line entirely if there's nothing natural to suggest — do not force it on short factual answers."
+
+	var toolDefs []loadout.ToolDefinition
+	if s.toolRegistry != nil {
+		toolDefs = s.toolRegistry.Definitions()
+	}
+	if len(toolDefs) > 0 {
+		baseSystemPrompt += " You have tools available for going beyond what's already been retrieved — searching memory again with a sharper query, searching the live web, or reaching other connected systems. Use them when the supplied context genuinely isn't enough; don't reach for a tool when the answer's already in front of you."
+	}
+
 	if trimmed := strings.TrimSpace(systemPrompt); trimmed != "" {
 		baseSystemPrompt += "\n\nUser-provided persona/system prompt information:\n" + trimmed
 	}
 
-	answer, err := s.chatClient.Complete(ctx, []chat.Message{
-		{
-			Role:    "system",
-			Content: baseSystemPrompt,
-		},
-		{
-			Role:    "user",
-			Content: contextPack,
-		},
-	})
-	if err != nil {
-		return "", provider, model, err
+	messages := []chat.Message{
+		{Role: "system", Content: baseSystemPrompt},
+		{Role: "user", Content: contextPack},
 	}
-	return answer, s.chatClient.ProviderName(), s.chatClient.ModelName(), nil
+
+	for i := 0; i < maxToolIterations; i++ {
+		result, err := s.chatClient.CompleteWithTools(ctx, messages, toolDefs)
+		if err != nil {
+			return "", provider, model, err
+		}
+		if len(result.ToolCalls) == 0 {
+			return result.Content, s.chatClient.ProviderName(), s.chatClient.ModelName(), nil
+		}
+
+		messages = append(messages, chat.Message{Role: "assistant", Content: result.Content, ToolCalls: result.ToolCalls})
+		for _, call := range result.ToolCalls {
+			toolResult, callErr := s.toolRegistry.Call(ctx, call.Name, call.Arguments)
+			if callErr != nil {
+				toolResult = fmt.Sprintf("error: %v", callErr)
+			}
+			s.logger.Info("chat tool call", "tool", call.Name)
+			messages = append(messages, chat.Message{Role: "tool", ToolCallID: call.ID, Content: toolResult})
+		}
+	}
+
+	return "", provider, model, fmt.Errorf("chat exceeded %d tool-call iterations without a final answer", maxToolIterations)
 }
 
 func (s *Server) handleMindDrillMemoryStats(w http.ResponseWriter, r *http.Request) {

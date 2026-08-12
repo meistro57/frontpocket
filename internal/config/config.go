@@ -23,6 +23,7 @@ type Config struct {
 	ContextPack     ContextPackConfig
 	Logging         LoggingConfig
 	Dev             DevConfig
+	Tools           ToolsConfig
 }
 
 type AppConfig struct {
@@ -133,6 +134,19 @@ type DevConfig struct {
 	CORSOrigins    []string
 }
 
+// ToolsConfig configures Eli's Loadout — the tool-calling layer wired into
+// /memory/chat. Every field here is optional and fails soft: an empty
+// TavilyAPIKey just disables web search (the tool reports "not configured"
+// instead of erroring), and an MCP server whose path doesn't resolve is
+// skipped at startup rather than blocking boot. See internal/tools and
+// github.com/meistro57/loadout.
+type ToolsConfig struct {
+	TavilyAPIKey         string
+	KaeMCPPath           string
+	FrontpocketMCPPath   string
+	FrontpocketMCPPython string
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		App: AppConfig{
@@ -223,6 +237,12 @@ func Load() (Config, error) {
 			Reload:         getEnvBool("DEV_RELOAD", false),
 			DebugEndpoints: getEnvBool("DEV_DEBUG_ENDPOINTS", false),
 			CORSOrigins:    splitCSV(getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:8080")),
+		},
+		Tools: ToolsConfig{
+			TavilyAPIKey:         getEnv("TAVILY_API_KEY", ""),
+			KaeMCPPath:           getEnv("KAE_MCP_PATH", "/home/mark/kae/mcp/kae-mcp"),
+			FrontpocketMCPPath:   getEnv("FRONTPOCKET_MCP_PATH", "/home/mark/mcp-servers/frontpocket_mcp.py"),
+			FrontpocketMCPPython: getEnv("FRONTPOCKET_MCP_PYTHON", "python3"),
 		},
 	}
 
