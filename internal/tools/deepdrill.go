@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/meistro57/frontpocket/internal/store"
 )
@@ -117,16 +119,46 @@ const (
 	DeepDrillUnknownSourceTier DeepDrillSourceTier = "UNKNOWN"
 )
 
+const (
+	// deepDrillRelevanceThreshold is the minimum fraction of a hypothesis's
+	// meaningful terms that must appear in an evidence chunk for that chunk
+	// to be associated with the hypothesis.
+	deepDrillRelevanceThreshold = 0.5
+
+	// deepDrillConfidenceScale converts net evidence weight (support minus
+	// counterevidence, provenance-scaled) into a confidence delta.
+	deepDrillConfidenceScale = 0.06
+
+	// deepDrillEvidenceStrengthScale converts net evidence weight into an
+	// evidence_strength delta for the same hypothesis.
+	deepDrillEvidenceStrengthScale = 0.08
+
+	// deepDrillMaterialConfidenceDelta is the minimum confidence change that
+	// counts as a material model change for information gain.
+	deepDrillMaterialConfidenceDelta = 0.01
+)
+
 type DeepDrillHypothesisState struct {
-	ID                    string    `json:"id"`
-	Statement             string    `json:"statement"`
-	Rank                  int       `json:"rank"`
-	Confidence            float64   `json:"confidence"`
-	EvidenceStrength      float64   `json:"evidence_strength"`
-	Status                string    `json:"status"`
-	SupportingEvidenceIDs []string  `json:"supporting_evidence_ids,omitempty"`
-	ContradictingEvidence []string  `json:"contradicting_evidence_ids,omitempty"`
-	LastUpdated           time.Time `json:"last_updated"`
+	ID                         string    `json:"id"`
+	Statement                  string    `json:"statement"`
+	Rank                       int       `json:"rank"`
+	Confidence                 float64   `json:"confidence"`
+	PriorConfidence            float64   `json:"prior_confidence,omitempty"`
+	ConfidenceDelta            float64   `json:"confidence_delta,omitempty"`
+	EvidenceStrength           float64   `json:"evidence_strength"`
+	SupportWeight              float64   `json:"support_weight,omitempty"`
+	CounterevidenceWeight      float64   `json:"counterevidence_weight,omitempty"`
+	ProvenanceWeight           float64   `json:"provenance_weight,omitempty"`
+	UniqueSupportCount         int       `json:"unique_support_count,omitempty"`
+	UniqueCounterevidenceCount int       `json:"unique_counterevidence_count,omitempty"`
+	RankDelta                  int       `json:"rank_delta,omitempty"`
+	ScoringReason              string    `json:"scoring_reason,omitempty"`
+	Status                     string    `json:"status"`
+	SupportingEvidenceIDs      []string  `json:"supporting_evidence_ids,omitempty"`
+	ContradictingEvidence      []string  `json:"contradicting_evidence_ids,omitempty"`
+	AmbiguousEvidenceIDs       []string  `json:"ambiguous_evidence_ids,omitempty"`
+	UniqueAmbiguousCount       int       `json:"unique_ambiguous_count,omitempty"`
+	LastUpdated                time.Time `json:"last_updated"`
 }
 
 type DeepDrillStrategyOutcome struct {
@@ -249,6 +281,7 @@ type DeepDrillStepResult struct {
 	DuplicateEvidence  bool                  `json:"duplicate_evidence"`
 	NegativeResult     bool                  `json:"negative_result"`
 	SelectedSourceTier DeepDrillSourceTier   `json:"selected_source_tier"`
+	Terminal           bool                  `json:"terminal,omitempty"`
 }
 
 type DeepDrillRunResult struct {
@@ -395,12 +428,12 @@ func (rt *MindDrillResearchRuntime) DeepDrillRun(ctx context.Context, req DeepDr
 		if err != nil {
 			return result, err
 		}
-		result.Steps = append(result.Steps, step)
 		result.State = *state
-		if !req.UntilStable && len(result.Steps) >= req.Steps {
+		if step.Terminal {
 			break
 		}
-		if req.UntilStable && state.BranchStatus == DeepDrillFrozen {
+		result.Steps = append(result.Steps, step)
+		if state.BranchStatus == DeepDrillFrozen {
 			break
 		}
 	}
@@ -418,24 +451,12 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 	}
 	if state.BranchStatus == DeepDrillFrozen {
 		if !shouldReopenFrozenBranch(state, plan.SelectedQuestion, plan.Collection) {
-			stopThought := DeepDrillThought{
-				Type:             DeepDrillThoughtStopDecision,
-				Question:         plan.SelectedQuestion,
-				UncertaintyClass: DeepDrillDiminishingReturns,
-				Strategy:         DeepDrillFreezeBranch,
-				EvidenceSummary:  "Branch remains frozen due to diminishing returns under current corpus and strategy set.",
-				InfoGain:         DeepDrillInfoLow,
-				Status:           "frozen",
-				NextAction:       "wait for new provenance tier or contradictory evidence",
-				EvidenceOrigin:   DeepDrillResearchThought,
-			}
-			if _, _, err := rt.storeDeepDrillThought(ctx, session, state, stopThought); err != nil {
-				return DeepDrillStepResult{}, nil, err
-			}
+			// Terminal: no new research work. Report the current frozen state
+			// without fabricating an iteration or a duplicate freeze artifact.
 			state.LastUpdated = time.Now().UTC()
 			session.DeepDrill = state
 			rt.sessions.put(session)
-			return DeepDrillStepResult{Step: state.Iterations + 1, Uncertainty: DeepDrillDiminishingReturns, Question: plan.SelectedQuestion, Strategy: DeepDrillFreezeBranch, EvidenceCount: 0, ThoughtCount: 1, InfoGain: DeepDrillInfoLow, BranchStatus: state.BranchStatus, NegativeResult: true, SelectedSourceTier: state.LastSeenProvenanceTier}, state, nil
+			return DeepDrillStepResult{Step: state.Iterations, Uncertainty: DeepDrillDiminishingReturns, Question: plan.SelectedQuestion, Strategy: DeepDrillFreezeBranch, EvidenceCount: 0, ThoughtCount: 0, InfoGain: DeepDrillInfoLow, BranchStatus: state.BranchStatus, NegativeResult: true, SelectedSourceTier: state.LastSeenProvenanceTier, Terminal: true}, state, nil
 		}
 		state.BranchStatus = DeepDrillOpen
 		state.FrozenReason = ""
@@ -445,7 +466,7 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 		}
 	}
 
-	modelBefore := exportHypothesisModel(state.Hypotheses)
+	modelBefore := cloneHypotheses(state.Hypotheses)
 	evidence, warnings, err := rt.runDeepDrillStrategy(ctx, collection, state, plan.SelectedStrategy, plan.SelectedQuestion)
 	if err != nil {
 		return DeepDrillStepResult{}, nil, err
@@ -557,10 +578,10 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 		state.BranchStatus = DeepDrillFrozen
 		state.FrozenReason = "diminishing returns: DeepDrill selected freeze policy"
 	} else if !repeatRun {
-		applyModelUpdate(state, plan.TopUncertainty, evidence, provenanceScore, hasContradiction)
+		applyModelUpdate(state, plan.TopUncertainty, evidence, provenanceScore)
 	}
-	modelAfter := exportHypothesisModel(state.Hypotheses)
-	infoGain := scoreInformationGain(modelBefore, modelAfter, state, len(evidence), duplicateEvidence, topTier)
+	modelAfter := cloneHypotheses(state.Hypotheses)
+	infoGain := scoreInformationGain(modelBefore, modelAfter, state, len(evidence), duplicateEvidence)
 
 	diminishing := infoGain == DeepDrillInfoLow || duplicateEvidence
 	if diminishing {
@@ -616,6 +637,25 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 		state.FrozenReason = fmt.Sprintf("%d consecutive low-gain runs", state.ConsecutiveLowGain)
 	}
 
+	// Emit exactly one terminal freeze artifact on the transition to FROZEN.
+	if state.BranchStatus == DeepDrillFrozen {
+		stopThought := DeepDrillThought{
+			Type:             DeepDrillThoughtStopDecision,
+			Question:         plan.SelectedQuestion,
+			UncertaintyClass: DeepDrillDiminishingReturns,
+			Strategy:         DeepDrillFreezeBranch,
+			EvidenceSummary:  "Branch frozen due to diminishing returns under current corpus and strategy set.",
+			InfoGain:         DeepDrillInfoLow,
+			Status:           "frozen",
+			NextAction:       "wait for new provenance tier or contradictory evidence",
+			EvidenceOrigin:   DeepDrillResearchThought,
+		}
+		if _, _, err := rt.storeDeepDrillThought(ctx, session, state, stopThought); err != nil {
+			return DeepDrillStepResult{}, nil, err
+		}
+		thoughtCount++
+	}
+
 	if reclassified {
 		reclassifyThought := DeepDrillThought{
 			Type:                    DeepDrillThoughtReclassify,
@@ -644,8 +684,8 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 		UncertaintyClass: plan.TopUncertainty,
 		Strategy:         plan.SelectedStrategy,
 		EvidenceSummary:  "DeepDrill updated competing hypothesis state and confidence after evaluating this run.",
-		ModelBefore:      modelBefore,
-		ModelAfter:       modelAfter,
+		ModelBefore:      exportHypothesisModel(modelBefore),
+		ModelAfter:       exportHypothesisModel(modelAfter),
 		InfoGain:         infoGain,
 		ProvenanceScore:  provenanceScore,
 		EvidenceOrigin:   DeepDrillResearchThought,
@@ -1172,94 +1212,645 @@ func deepDrillFingerprint(thought DeepDrillThought) string {
 	return hex.EncodeToString(h[:])
 }
 
-func applyModelUpdate(state *DeepDrillState, uncertainty DeepDrillUncertainty, evidence []ResearchResult, provenanceScore float64, hasContradiction bool) {
-	now := time.Now().UTC()
+func applyModelUpdate(state *DeepDrillState, uncertainty DeepDrillUncertainty, evidence []ResearchResult, provenanceScore float64) {
 	if len(state.Hypotheses) == 0 {
 		return
 	}
+	now := time.Now().UTC()
 	for idx := range state.Hypotheses {
-		state.Hypotheses[idx].LastUpdated = now
-		if strings.TrimSpace(state.Hypotheses[idx].Status) == "" {
-			state.Hypotheses[idx].Status = "active"
+		h := &state.Hypotheses[idx]
+		h.PriorConfidence = h.Confidence
+		h.LastUpdated = now
+		if strings.TrimSpace(h.Status) == "" {
+			h.Status = "active"
 		}
 	}
-	if uncertainty == DeepDrillProvenanceGap || uncertainty == DeepDrillSourceQuality {
-		delta := 0.08
-		if provenanceScore > 0.7 {
-			delta = -0.03
-		}
-		for idx := range state.Hypotheses {
-			state.Hypotheses[idx].Confidence = clamp01(state.Hypotheses[idx].Confidence - delta)
-		}
-		return
-	}
-	if len(evidence) == 0 {
-		for idx := range state.Hypotheses {
-			state.Hypotheses[idx].EvidenceStrength = clamp01(state.Hypotheses[idx].EvidenceStrength - 0.02)
-		}
-		return
-	}
+
+	supportByID, counterByID, ambiguousByID := classifyEvidenceForHypotheses(state.Hypotheses, evidence)
+
 	for idx := range state.Hypotheses {
-		state.Hypotheses[idx].EvidenceStrength = clamp01(state.Hypotheses[idx].EvidenceStrength + 0.03)
+		h := &state.Hypotheses[idx]
+		priorConfidence := h.Confidence
+
+		newSupport := unseenEvidence(h.SupportingEvidenceIDs, supportByID[h.ID])
+		newCounter := unseenEvidence(h.ContradictingEvidence, counterByID[h.ID])
+		newAmbiguous := unseenEvidence(h.AmbiguousEvidenceIDs, ambiguousByID[h.ID])
+
+		supportWeight := sumProvenanceWeight(newSupport)
+		counterWeight := sumProvenanceWeight(newCounter)
+		netWeight := supportWeight - counterWeight
+
+		h.SupportWeight = supportWeight
+		h.CounterevidenceWeight = counterWeight
+		h.ProvenanceWeight = clamp01(provenanceScore)
+		h.UniqueSupportCount = len(newSupport)
+		h.UniqueCounterevidenceCount = len(newCounter)
+		h.UniqueAmbiguousCount = len(newAmbiguous)
+
+		h.Confidence = clamp01(h.Confidence + netWeight*deepDrillConfidenceScale)
+		h.ConfidenceDelta = h.Confidence - priorConfidence
+		h.EvidenceStrength = clamp01(h.EvidenceStrength + netWeight*deepDrillEvidenceStrengthScale)
+
+		if len(newCounter) > 0 {
+			h.Status = "contested"
+		} else if h.Status == "contested" && len(h.ContradictingEvidence) == 0 {
+			h.Status = "active"
+		}
+
+		h.SupportingEvidenceIDs = uniqueTrimmed(append(h.SupportingEvidenceIDs, evidenceIDs(newSupport)...))
+		h.ContradictingEvidence = uniqueTrimmed(append(h.ContradictingEvidence, evidenceIDs(newCounter)...))
+		h.AmbiguousEvidenceIDs = uniqueTrimmed(append(h.AmbiguousEvidenceIDs, evidenceIDs(newAmbiguous)...))
+
+		h.ScoringReason = scoringReason(len(newSupport), len(newCounter), len(newAmbiguous), supportWeight, counterWeight)
 	}
-	if hasContradiction {
-		for idx := range state.Hypotheses {
-			state.Hypotheses[idx].Confidence = clamp01(state.Hypotheses[idx].Confidence - 0.04)
-			state.Hypotheses[idx].Status = "contested"
-		}
-	}
-	for _, item := range sampleResults(evidence, 5) {
-		evidenceID := firstNonEmpty(item.MemoryID, item.ChunkID, item.SourceFingerprint)
-		if evidenceID == "" {
-			continue
-		}
-		state.Hypotheses[0].SupportingEvidenceIDs = uniqueTrimmed(append(state.Hypotheses[0].SupportingEvidenceIDs, evidenceID))
-		if hasContradiction && len(state.Hypotheses) > 1 {
-			state.Hypotheses[1].ContradictingEvidence = uniqueTrimmed(append(state.Hypotheses[1].ContradictingEvidence, evidenceID))
-		}
+
+	rerankHypotheses(state.Hypotheses)
+}
+
+func scoringReason(supportCount, counterCount, ambiguousCount int, supportWeight, counterWeight float64) string {
+	switch {
+	case supportCount == 0 && counterCount == 0 && ambiguousCount == 0:
+		return "no new discriminating evidence"
+	case supportCount == 0 && counterCount == 0 && ambiguousCount > 0:
+		return "ambiguous evidence, polarity unresolved"
+	case supportCount > 0 && counterCount == 0:
+		return fmt.Sprintf("new supporting evidence (weight %.2f)", supportWeight)
+	case supportCount == 0 && counterCount > 0:
+		return fmt.Sprintf("new counterevidence (weight %.2f)", counterWeight)
+	default:
+		return fmt.Sprintf("mixed evidence: support %.2f vs counter %.2f", supportWeight, counterWeight)
 	}
 }
 
-func scoreInformationGain(modelBefore, modelAfter map[string]any, state *DeepDrillState, evidenceCount int, duplicate bool, tier DeepDrillSourceTier) DeepDrillInfoGain {
+func unseenEvidence(seenIDs []string, candidates []ResearchResult) []ResearchResult {
+	if len(candidates) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(seenIDs))
+	for _, id := range seenIDs {
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+	}
+	out := make([]ResearchResult, 0, len(candidates))
+	for _, item := range candidates {
+		id := evidenceIDForResult(item)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func evidenceIDForResult(item ResearchResult) string {
+	return firstNonEmpty(item.MemoryID, item.ChunkID, item.SourceFingerprint, item.SourceDocumentID, item.SourceTitle)
+}
+
+func evidenceIDs(items []ResearchResult) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if id := evidenceIDForResult(item); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func sumProvenanceWeight(items []ResearchResult) float64 {
+	total := 0.0
+	for _, item := range items {
+		total += provenanceTierWeight(provenanceTierForResult(item))
+	}
+	return total
+}
+
+func classifyEvidenceForHypotheses(hypotheses []DeepDrillHypothesisState, evidence []ResearchResult) (supportByID, counterByID, ambiguousByID map[string][]ResearchResult) {
+	supportByID = make(map[string][]ResearchResult)
+	counterByID = make(map[string][]ResearchResult)
+	ambiguousByID = make(map[string][]ResearchResult)
+	for _, item := range evidence {
+		for _, hypothesis := range hypotheses {
+			classification := classifyEvidenceForHypothesis(hypothesis, item)
+			switch classification.Polarity {
+			case deepDrillPolaritySupport:
+				supportByID[hypothesis.ID] = append(supportByID[hypothesis.ID], item)
+			case deepDrillPolarityCounter:
+				counterByID[hypothesis.ID] = append(counterByID[hypothesis.ID], item)
+			case deepDrillPolarityAmbiguous:
+				ambiguousByID[hypothesis.ID] = append(ambiguousByID[hypothesis.ID], item)
+			}
+		}
+	}
+	return supportByID, counterByID, ambiguousByID
+}
+
+type deepDrillPolarity string
+
+const (
+	deepDrillPolaritySupport   deepDrillPolarity = "support"
+	deepDrillPolarityCounter   deepDrillPolarity = "counter"
+	deepDrillPolarityAmbiguous deepDrillPolarity = "ambiguous"
+	deepDrillPolarityNone      deepDrillPolarity = "none"
+)
+
+// deepDrillEvidenceClassification is the per-(evidence, hypothesis) decision
+// record. It carries every intermediate score so diagnostics can show exactly
+// why an item was or was not associated with a hypothesis.
+type deepDrillEvidenceClassification struct {
+	EvidenceID         string
+	UsableTextFields   []string
+	HypothesisConcepts []string
+	EvidenceConcepts   []string
+	LexicalOverlap     float64
+	ConceptMatches     []string
+	RelationMatches    []string
+	NegationSignals    []string
+	HedgeSignals       []string
+	RelevanceScore     float64
+	Relevant           bool
+	Polarity           deepDrillPolarity
+	Reason             string
+}
+
+// deepDrillEvidenceEnvelope assembles every usable text field from a result so
+// classification operates over the richest available body while preserving the
+// field boundaries for diagnostics.
+type deepDrillEvidenceEnvelope struct {
+	fields []string
+	body   string
+}
+
+func buildEvidenceEnvelope(item ResearchResult) deepDrillEvidenceEnvelope {
+	fields := make([]string, 0, 7)
+	parts := make([]string, 0, 7)
+	add := func(name, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		fields = append(fields, name)
+		parts = append(parts, value)
+	}
+	add("text", item.Text)
+	add("source_quote", item.SourceQuote)
+	add("summary", item.Summary)
+	add("source_title", item.SourceTitle)
+	add("filename", item.Filename)
+	add("path", item.Path)
+	add("section_or_heading", item.SectionOrHeading)
+	return deepDrillEvidenceEnvelope{fields: fields, body: strings.Join(parts, " ")}
+}
+
+// deepDrillConceptCanonical normalizes surface tokens to canonical concepts so
+// morphological and relational variants align ("developed"/"development" ->
+// "develop", "joined"/"recombined" -> "recombine"). Unmapped tokens pass
+// through unchanged, keeping this an explicit, auditable vocabulary rather
+// than a hidden stemmer.
+var deepDrillConceptCanonical = map[string]string{
+	"develop": "develop", "developed": "develop", "development": "develop",
+	"emerge": "develop", "emerged": "develop", "emergent": "develop",
+	"originate": "develop", "originated": "develop", "origin": "develop", "origins": "develop",
+	"arise": "develop", "arose": "develop", "arises": "develop",
+
+	"independent": "independent", "independently": "independent",
+	"separate": "independent", "separately": "independent", "separation": "independent",
+
+	"recombine": "recombine", "recombined": "recombine", "recombination": "recombine",
+	"join": "recombine", "joined": "recombine", "joining": "recombine",
+	"merge": "recombine", "merged": "recombine", "merging": "recombine",
+	"synthesize": "recombine", "synthesized": "recombine", "synthesis": "recombine",
+
+	"upstream": "precede", "enable": "precede", "enabled": "precede",
+	"precede": "precede", "preceded": "precede", "led": "precede", "lead": "precede",
+
+	"downstream": "map", "reinterpret": "map", "reinterpreted": "map",
+	"reframe": "map", "reframed": "map", "map": "map", "mapped": "map",
+	"translate": "map", "translated": "map", "translation": "map",
+
+	"summary": "summary", "summaries": "summary", "summarize": "summary", "summarized": "summary",
+	"overview": "summary", "overviews": "summary", "abstract": "summary",
+
+	"chunk": "chunk", "chunks": "chunk", "chunking": "chunk", "segmentation": "chunk",
+
+	"ingest": "ingest", "ingestion": "ingest", "ingested": "ingest",
+	"import": "ingest", "imported": "ingest",
+
+	"retrieve": "retrieve", "retrieval": "retrieve", "retrieved": "retrieve",
+
+	"artifact": "produce", "artifacts": "produce", "induced": "produce",
+	"produce": "produce", "produced": "produce", "generate": "produce", "generated": "produce", "generation": "produce",
+
+	"transcript": "transcript", "transcripts": "transcript", "draft": "transcript", "drafts": "transcript",
+
+	"branch": "branch", "branches": "branch",
+	"lineage": "lineage", "hybrid": "hybrid", "hybrids": "hybrid",
+	"tradition": "tradition", "traditions": "tradition",
+	"term": "terminology", "terms": "terminology", "terminology": "terminology",
+	"vocabulary": "vocabulary", "vocab": "vocabulary",
+	"connection": "connection", "connections": "connection",
+	"bridge": "bridge", "bridges": "bridge",
+	"apparent": "apparent", "appears": "appear", "appear": "appear",
+	"absent": "absent", "absence": "absent",
+	"sacred": "sacred", "symbolic": "symbolic", "symbolism": "symbolic",
+	"technical": "technical",
+}
+
+// deepDrillRelationConcepts names the canonical concepts that represent a
+// relation rather than a topic. A hypothesis and evidence sharing one of these
+// families is a strong relevance signal that does not depend on verbatim
+// sentence overlap.
+var deepDrillRelationConcepts = map[string]string{
+	"develop":     "DEVELOP_ORIGIN",
+	"independent": "INDEPENDENT",
+	"recombine":   "RECOMBINE",
+	"precede":     "PRECEDE_ENABLE",
+	"map":         "REINTERPRET_MAP",
+	"summary":     "SUMMARY_OVERVIEW",
+	"chunk":       "CHUNKING",
+	"ingest":      "INGESTION",
+	"retrieve":    "RETRIEVAL",
+	"produce":     "ARTIFACT_PRODUCE",
+}
+
+func normalizeConcepts(text string) []string {
+	tokens := tokenizeMeaningful(text)
+	out := make([]string, 0, len(tokens))
+	seen := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		concept := token
+		if canonical, ok := deepDrillConceptCanonical[token]; ok {
+			concept = canonical
+		}
+		if _, ok := seen[concept]; ok {
+			continue
+		}
+		seen[concept] = struct{}{}
+		out = append(out, concept)
+	}
+	return out
+}
+
+func rawLexicalOverlap(statement, evidenceText string) float64 {
+	statementTokens := tokenizeMeaningful(statement)
+	if len(statementTokens) == 0 {
+		return 0
+	}
+	evidenceTokens := tokenizeMeaningful(evidenceText)
+	if len(evidenceTokens) == 0 {
+		return 0
+	}
+	evidenceSet := make(map[string]struct{}, len(evidenceTokens))
+	for _, token := range evidenceTokens {
+		evidenceSet[token] = struct{}{}
+	}
+	matches := 0
+	for _, token := range statementTokens {
+		if _, ok := evidenceSet[token]; ok {
+			matches++
+		}
+	}
+	return float64(matches) / float64(len(statementTokens))
+}
+
+func splitDeepDrillWords(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+}
+
+func detectNegationSignals(text string) []string {
+	lower := strings.ToLower(text)
+	words := splitDeepDrillWords(lower)
+	wordSet := make(map[string]struct{}, len(words))
+	for _, word := range words {
+		wordSet[word] = struct{}{}
+	}
+	signals := make([]string, 0, 8)
+	for _, phrase := range []string{"does not", "did not", "do not", "no evidence", "rather than", "separate from", "unrelated to", "independent of"} {
+		if strings.Contains(lower, phrase) {
+			signals = append(signals, phrase)
+		}
+	}
+	for _, word := range []string{"never", "without", "instead", "contrary", "however", "not"} {
+		if _, ok := wordSet[word]; ok {
+			signals = append(signals, word)
+		}
+	}
+	if strings.Contains(lower, "contradict") {
+		signals = append(signals, "contradict*")
+	}
+	if strings.Contains(lower, "inconsisten") {
+		signals = append(signals, "inconsisten*")
+	}
+	return uniqueTrimmed(signals)
+}
+
+func detectHedgeSignals(text string) []string {
+	lower := strings.ToLower(text)
+	words := splitDeepDrillWords(lower)
+	wordSet := make(map[string]struct{}, len(words))
+	for _, word := range words {
+		wordSet[word] = struct{}{}
+	}
+	signals := make([]string, 0, 6)
+	for _, word := range []string{"may", "might", "possibly", "perhaps", "unclear", "uncertain", "ambiguous", "whether", "maybe"} {
+		if _, ok := wordSet[word]; ok {
+			signals = append(signals, word)
+		}
+	}
+	return uniqueTrimmed(signals)
+}
+
+func classifyEvidenceForHypothesis(hypothesis DeepDrillHypothesisState, item ResearchResult) deepDrillEvidenceClassification {
+	result := deepDrillEvidenceClassification{EvidenceID: evidenceIDForResult(item)}
+	envelope := buildEvidenceEnvelope(item)
+	result.UsableTextFields = envelope.fields
+	if len(envelope.fields) == 0 {
+		result.Polarity = deepDrillPolarityNone
+		result.Reason = "no classifiable source text"
+		return result
+	}
+
+	hypothesisConcepts := normalizeConcepts(hypothesis.Statement)
+	evidenceConcepts := normalizeConcepts(envelope.body)
+	result.HypothesisConcepts = hypothesisConcepts
+	result.EvidenceConcepts = evidenceConcepts
+
+	if len(hypothesisConcepts) == 0 {
+		result.Polarity = deepDrillPolarityNone
+		result.Reason = "empty hypothesis statement"
+		return result
+	}
+
+	result.LexicalOverlap = rawLexicalOverlap(hypothesis.Statement, envelope.body)
+
+	evidenceSet := make(map[string]struct{}, len(evidenceConcepts))
+	for _, concept := range evidenceConcepts {
+		evidenceSet[concept] = struct{}{}
+	}
+	for _, concept := range hypothesisConcepts {
+		if _, ok := evidenceSet[concept]; ok {
+			result.ConceptMatches = append(result.ConceptMatches, concept)
+		}
+	}
+	for _, concept := range result.ConceptMatches {
+		if family, ok := deepDrillRelationConcepts[concept]; ok {
+			result.RelationMatches = append(result.RelationMatches, family)
+		}
+	}
+	result.RelationMatches = uniqueTrimmed(result.RelationMatches)
+
+	result.NegationSignals = detectNegationSignals(envelope.body)
+	result.HedgeSignals = detectHedgeSignals(envelope.body)
+
+	coverage := 0.0
+	if len(hypothesisConcepts) > 0 {
+		coverage = float64(len(result.ConceptMatches)) / float64(len(hypothesisConcepts))
+	}
+	result.RelevanceScore = coverage
+
+	if len(result.RelationMatches) > 0 || coverage >= deepDrillRelevanceThreshold {
+		result.Relevant = true
+	}
+
+	if !result.Relevant {
+		result.Polarity = deepDrillPolarityNone
+		result.Reason = fmt.Sprintf("no shared relation or concept coverage (%.2f)", coverage)
+		return result
+	}
+
+	switch {
+	case len(result.NegationSignals) > 0:
+		result.Polarity = deepDrillPolarityCounter
+		result.Reason = fmt.Sprintf("relevant with negation signal: %s", strings.Join(result.NegationSignals, ", "))
+	case len(result.HedgeSignals) > 0:
+		result.Polarity = deepDrillPolarityAmbiguous
+		result.Reason = fmt.Sprintf("relevant but polarity unresolved (%s)", strings.Join(result.HedgeSignals, ", "))
+	default:
+		result.Polarity = deepDrillPolaritySupport
+		result.Reason = "relevant without negation or hedge signal"
+	}
+	return result
+}
+
+var deepDrillStopwords = map[string]struct{}{
+	"the": {}, "and": {}, "for": {}, "are": {}, "was": {}, "were": {},
+	"that": {}, "this": {}, "with": {}, "from": {}, "have": {}, "has": {},
+	"had": {}, "not": {}, "but": {}, "does": {}, "did": {}, "what": {},
+	"when": {}, "where": {}, "which": {}, "who": {}, "how": {}, "why": {},
+	"its": {}, "they": {}, "them": {}, "their": {}, "there": {}, "here": {},
+	"about": {}, "into": {}, "onto": {}, "over": {}, "under": {}, "than": {},
+	"then": {}, "these": {}, "those": {}, "such": {}, "some": {}, "any": {},
+	"each": {}, "both": {}, "also": {}, "can": {}, "will": {}, "would": {},
+	"should": {}, "could": {}, "may": {}, "might": {}, "must": {},
+}
+
+func tokenizeMeaningful(text string) []string {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	fields := strings.FieldsFunc(lower, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if !isMeaningfulDeepDrillToken(field) {
+			continue
+		}
+		if _, ok := deepDrillStopwords[field]; ok {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		out = append(out, field)
+	}
+	return out
+}
+
+func isMeaningfulDeepDrillToken(field string) bool {
+	if len(field) >= 3 {
+		return true
+	}
+	if len(field) == 2 {
+		for _, r := range field {
+			if r >= '0' && r <= '9' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// deepDrillClassificationRow is a diagnostic record that mirrors the current
+// evidence-classification decision for a single evidence item against a single
+// hypothesis. It exposes the exact terms, component scores, polarity, and final
+// classification reason so a stalled run can be audited without guessing where
+// evidence association broke down.
+type deepDrillClassificationRow struct {
+	EvidenceID       string   `json:"evidence_id"`
+	HypothesisID     string   `json:"hypothesis_id"`
+	UsableTextFields []string `json:"usable_text_fields,omitempty"`
+	LexicalOverlap   float64  `json:"lexical_overlap"`
+	ConceptMatches   []string `json:"concept_matches,omitempty"`
+	RelationMatches  []string `json:"relation_matches,omitempty"`
+	NegationSignals  []string `json:"negation_signals,omitempty"`
+	RelevanceScore   float64  `json:"relevance_score"`
+	Relevant         bool     `json:"relevant"`
+	Polarity         string   `json:"polarity"`
+	Reason           string   `json:"classification_reason"`
+}
+
+// diagnoseEvidenceClassification reproduces classifyEvidenceForHypotheses
+// decision-by-decision while surfacing the intermediate values that the
+// production path discards. It is intended for audits and tests only; it does
+// not alter stored state or hypothesis scoring.
+func diagnoseEvidenceClassification(hypotheses []DeepDrillHypothesisState, evidence []ResearchResult) []deepDrillClassificationRow {
+	rows := make([]deepDrillClassificationRow, 0, len(hypotheses)*len(evidence))
+	for _, item := range evidence {
+		for _, hypothesis := range hypotheses {
+			c := classifyEvidenceForHypothesis(hypothesis, item)
+			rows = append(rows, deepDrillClassificationRow{
+				EvidenceID:       c.EvidenceID,
+				HypothesisID:     hypothesis.ID,
+				UsableTextFields: c.UsableTextFields,
+				LexicalOverlap:   c.LexicalOverlap,
+				ConceptMatches:   c.ConceptMatches,
+				RelationMatches:  c.RelationMatches,
+				NegationSignals:  c.NegationSignals,
+				RelevanceScore:   c.RelevanceScore,
+				Relevant:         c.Relevant,
+				Polarity:         string(c.Polarity),
+				Reason:           c.Reason,
+			})
+		}
+	}
+	return rows
+}
+
+func rerankHypotheses(hypotheses []DeepDrillHypothesisState) {
+	if len(hypotheses) == 0 {
+		return
+	}
+	oldRanks := make(map[string]int, len(hypotheses))
+	for _, hypothesis := range hypotheses {
+		oldRanks[hypothesis.ID] = hypothesis.Rank
+	}
+	sort.SliceStable(hypotheses, func(i, j int) bool {
+		si := hypothesisRankScore(hypotheses[i])
+		sj := hypothesisRankScore(hypotheses[j])
+		if si == sj {
+			return hypotheses[i].ID < hypotheses[j].ID
+		}
+		return si > sj
+	})
+	for idx := range hypotheses {
+		hypotheses[idx].RankDelta = (idx + 1) - oldRanks[hypotheses[idx].ID]
+		hypotheses[idx].Rank = idx + 1
+	}
+}
+
+func hypothesisRankScore(hypothesis DeepDrillHypothesisState) float64 {
+	return hypothesis.Confidence + hypothesis.EvidenceStrength*0.1
+}
+
+func cloneHypotheses(hypotheses []DeepDrillHypothesisState) []DeepDrillHypothesisState {
+	clone := make([]DeepDrillHypothesisState, len(hypotheses))
+	copy(clone, hypotheses)
+	for idx := range clone {
+		clone[idx].SupportingEvidenceIDs = append([]string(nil), hypotheses[idx].SupportingEvidenceIDs...)
+		clone[idx].ContradictingEvidence = append([]string(nil), hypotheses[idx].ContradictingEvidence...)
+		clone[idx].AmbiguousEvidenceIDs = append([]string(nil), hypotheses[idx].AmbiguousEvidenceIDs...)
+	}
+	return clone
+}
+
+func materialModelChange(before, after []DeepDrillHypothesisState) bool {
+	if len(before) != len(after) {
+		return true
+	}
+	beforeByID := make(map[string]DeepDrillHypothesisState, len(before))
+	for _, hypothesis := range before {
+		beforeByID[hypothesis.ID] = hypothesis
+	}
+	for _, current := range after {
+		prior, ok := beforeByID[current.ID]
+		if !ok {
+			return true
+		}
+		if prior.Rank != current.Rank {
+			return true
+		}
+		if prior.Status != current.Status {
+			return true
+		}
+		if math.Abs(prior.Confidence-current.Confidence) >= deepDrillMaterialConfidenceDelta {
+			return true
+		}
+		if !stringSlicesEqual(prior.SupportingEvidenceIDs, current.SupportingEvidenceIDs) {
+			return true
+		}
+		if !stringSlicesEqual(prior.ContradictingEvidence, current.ContradictingEvidence) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for idx := range a {
+		if a[idx] != b[idx] {
+			return false
+		}
+	}
+	return true
+}
+
+func scoreInformationGain(modelBefore, modelAfter []DeepDrillHypothesisState, state *DeepDrillState, evidenceCount int, duplicate bool) DeepDrillInfoGain {
 	if state != nil && state.BranchStatus == DeepDrillFrozen {
 		return DeepDrillInfoHigh
 	}
 	if duplicate {
 		return DeepDrillInfoLow
 	}
-	if tier == DeepDrillRawSource || tier == DeepDrillVersionedDraft || tier == DeepDrillRawTranscript {
-		if !mapsEqual(modelBefore, modelAfter) {
-			return DeepDrillInfoHigh
-		}
-		return DeepDrillInfoMedium
+	if evidenceCount == 0 {
+		return DeepDrillInfoLow
 	}
-	if !mapsEqual(modelBefore, modelAfter) {
+	if materialModelChange(modelBefore, modelAfter) {
 		return DeepDrillInfoHigh
 	}
-	if evidenceCount > 0 {
-		return DeepDrillInfoMedium
-	}
-	return DeepDrillInfoLow
-}
-
-func mapsEqual(a, b map[string]any) bool {
-	left, errA := json.Marshal(a)
-	right, errB := json.Marshal(b)
-	if errA != nil || errB != nil {
-		return false
-	}
-	return string(left) == string(right)
+	return DeepDrillInfoMedium
 }
 
 func exportHypothesisModel(hypotheses []DeepDrillHypothesisState) map[string]any {
 	rows := make([]map[string]any, 0, len(hypotheses))
 	for _, hypothesis := range hypotheses {
 		rows = append(rows, map[string]any{
-			"id":                hypothesis.ID,
-			"rank":              hypothesis.Rank,
-			"confidence":        hypothesis.Confidence,
-			"evidence_strength": hypothesis.EvidenceStrength,
-			"status":            hypothesis.Status,
+			"id":                           hypothesis.ID,
+			"rank":                         hypothesis.Rank,
+			"rank_delta":                   hypothesis.RankDelta,
+			"confidence":                   hypothesis.Confidence,
+			"prior_confidence":             hypothesis.PriorConfidence,
+			"confidence_delta":             hypothesis.ConfidenceDelta,
+			"evidence_strength":            hypothesis.EvidenceStrength,
+			"support_weight":               hypothesis.SupportWeight,
+			"counterevidence_weight":       hypothesis.CounterevidenceWeight,
+			"provenance_weight":            hypothesis.ProvenanceWeight,
+			"unique_support_count":         hypothesis.UniqueSupportCount,
+			"unique_counterevidence_count": hypothesis.UniqueCounterevidenceCount,
+			"unique_ambiguous_count":       hypothesis.UniqueAmbiguousCount,
+			"scoring_reason":               hypothesis.ScoringReason,
+			"status":                       hypothesis.Status,
+			"supporting_evidence_ids":      hypothesis.SupportingEvidenceIDs,
+			"contradicting_evidence_ids":   hypothesis.ContradictingEvidence,
+			"ambiguous_evidence_ids":       hypothesis.AmbiguousEvidenceIDs,
 		})
 	}
 	return map[string]any{"hypotheses": rows}
@@ -1286,6 +1877,7 @@ func normalizeHypothesisSeeds(input []DeepDrillHypothesisState) []DeepDrillHypot
 			Status:                firstNonEmpty(item.Status, "active"),
 			SupportingEvidenceIDs: uniqueTrimmed(item.SupportingEvidenceIDs),
 			ContradictingEvidence: uniqueTrimmed(item.ContradictingEvidence),
+			AmbiguousEvidenceIDs:  uniqueTrimmed(item.AmbiguousEvidenceIDs),
 			LastUpdated:           now,
 		}
 		if item.Rank > 0 {

@@ -196,18 +196,347 @@ func TestDeepDrillStrategySelectionByUncertaintyType(t *testing.T) {
 	}
 }
 
-func TestDeepDrillProvenanceDowngradeKeepsRankOrder(t *testing.T) {
+func TestDeepDrillProvenanceDoesNotGloballyPenalize(t *testing.T) {
 	state := newDefaultDeepDrillState("minddrill_research_thoughts")
 	state.Hypotheses = []DeepDrillHypothesisState{
 		{ID: "H3", Rank: 1, Confidence: 0.6, EvidenceStrength: 0.5},
 		{ID: "H2", Rank: 2, Confidence: 0.55, EvidenceStrength: 0.4},
 	}
-	applyModelUpdate(state, DeepDrillProvenanceGap, []ResearchResult{{SourceType: "audio_overview"}}, 0.3, false)
-	if state.Hypotheses[0].Rank != 1 || state.Hypotheses[1].Rank != 2 {
-		t.Fatalf("expected ranks unchanged, got %#v", state.Hypotheses)
+	// A weak-provenance investigation with no hypothesis-relevant evidence
+	// must not mechanically drive every hypothesis confidence toward zero.
+	applyModelUpdate(state, DeepDrillProvenanceGap, []ResearchResult{{SourceType: "audio_overview"}}, 0.3)
+	if state.Hypotheses[0].Confidence != 0.6 || state.Hypotheses[1].Confidence != 0.55 {
+		t.Fatalf("expected no global provenance penalty, got %#v", state.Hypotheses)
 	}
-	if !(state.Hypotheses[0].Confidence < 0.6 && state.Hypotheses[1].Confidence < 0.55) {
-		t.Fatalf("expected confidence downgrade, got %#v", state.Hypotheses)
+	if state.Hypotheses[0].Rank != 1 || state.Hypotheses[1].Rank != 2 {
+		t.Fatalf("expected rank order preserved, got %#v", state.Hypotheses)
+	}
+}
+
+func newScoredHypotheses() []DeepDrillHypothesisState {
+	return []DeepDrillHypothesisState{
+		{ID: "H1", Statement: "alpha", Rank: 1, Confidence: 0.5, EvidenceStrength: 0.3, Status: "active"},
+		{ID: "H2", Statement: "beta", Rank: 2, Confidence: 0.5, EvidenceStrength: 0.3, Status: "active"},
+		{ID: "H3", Statement: "gamma", Rank: 3, Confidence: 0.5, EvidenceStrength: 0.3, Status: "active"},
+		{ID: "H4", Statement: "delta", Rank: 4, Confidence: 0.5, EvidenceStrength: 0.3, Status: "active"},
+	}
+}
+
+func hypothesisByID(hypotheses []DeepDrillHypothesisState, id string) DeepDrillHypothesisState {
+	for _, h := range hypotheses {
+		if h.ID == id {
+			return h
+		}
+	}
+	return DeepDrillHypothesisState{}
+}
+
+func TestDeepDrillSupportOnlyAffectsTargetHypothesis(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillEvidenceGap, []ResearchResult{{MemoryID: "e1", Text: "alpha", SourceType: "document"}}, 1.0)
+	h1 := hypothesisByID(state.Hypotheses, "H1")
+	h2 := hypothesisByID(state.Hypotheses, "H2")
+	if !(h1.Confidence > 0.5) {
+		t.Fatalf("expected H1 confidence to increase, got %f", h1.Confidence)
+	}
+	if h2.Confidence != 0.5 || h2.EvidenceStrength != 0.3 {
+		t.Fatalf("expected H2 unchanged, got conf=%f ev=%f", h2.Confidence, h2.EvidenceStrength)
+	}
+	if hypothesisByID(state.Hypotheses, "H3").Confidence != 0.5 || hypothesisByID(state.Hypotheses, "H4").Confidence != 0.5 {
+		t.Fatal("expected H3/H4 unchanged")
+	}
+}
+
+func TestDeepDrillCounterevidenceOnlyAffectsTargetHypothesis(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillContradiction, []ResearchResult{{MemoryID: "e1", Text: "beta however", SourceType: "document"}}, 1.0)
+	h2 := hypothesisByID(state.Hypotheses, "H2")
+	if !(h2.Confidence < 0.5) {
+		t.Fatalf("expected H2 confidence to decrease, got %f", h2.Confidence)
+	}
+	if h2.Status != "contested" {
+		t.Fatalf("expected H2 contested, got %s", h2.Status)
+	}
+	if hypothesisByID(state.Hypotheses, "H1").Confidence != 0.5 || hypothesisByID(state.Hypotheses, "H3").Confidence != 0.5 || hypothesisByID(state.Hypotheses, "H4").Confidence != 0.5 {
+		t.Fatal("expected H1/H3/H4 unchanged")
+	}
+}
+
+func TestDeepDrillDuplicateEvidenceCountedOnce(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	evidence := []ResearchResult{{MemoryID: "e1", Text: "alpha", SourceType: "document"}}
+	applyModelUpdate(state, DeepDrillEvidenceGap, evidence, 1.0)
+	first := hypothesisByID(state.Hypotheses, "H1").Confidence
+	applyModelUpdate(state, DeepDrillEvidenceGap, evidence, 1.0)
+	second := hypothesisByID(state.Hypotheses, "H1").Confidence
+	if first != second {
+		t.Fatalf("expected duplicate evidence to produce no additional change, got %f then %f", first, second)
+	}
+}
+
+func TestDeepDrillWeakProvenanceContributesLess(t *testing.T) {
+	raw := newDefaultDeepDrillState("minddrill_research_thoughts")
+	raw.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(raw, DeepDrillEvidenceGap, []ResearchResult{{MemoryID: "e1", Text: "alpha", SourceType: "document"}}, 1.0)
+	rawDelta := hypothesisByID(raw.Hypotheses, "H1").Confidence - 0.5
+
+	weak := newDefaultDeepDrillState("minddrill_research_thoughts")
+	weak.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(weak, DeepDrillEvidenceGap, []ResearchResult{{MemoryID: "e1", Text: "alpha", SourceType: "audio_overview"}}, 1.0)
+	weakDelta := hypothesisByID(weak.Hypotheses, "H1").Confidence - 0.5
+
+	if !(weakDelta < rawDelta) {
+		t.Fatalf("expected weak provenance to contribute less, raw=%f weak=%f", rawDelta, weakDelta)
+	}
+}
+
+func TestDeepDrillNoEvidenceDoesNotCollapseConfidence(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillEvidenceGap, nil, 0)
+	for _, h := range state.Hypotheses {
+		if h.Confidence != 0.5 {
+			t.Fatalf("expected confidence unchanged without evidence, %s got %f", h.ID, h.Confidence)
+		}
+	}
+}
+
+func TestDeepDrillMixedEvidenceNetReflectsBoth(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	evidence := []ResearchResult{
+		{MemoryID: "e1", Text: "alpha", SourceType: "document"},
+		{MemoryID: "e2", Text: "alpha extra", SourceType: "document"},
+		{MemoryID: "e3", Text: "alpha however", SourceType: "document"},
+	}
+	applyModelUpdate(state, DeepDrillContradiction, evidence, 1.0)
+	h1 := hypothesisByID(state.Hypotheses, "H1")
+	// two support (2.0) minus one counter (1.0) = net +1.0 weight.
+	if !(h1.Confidence > 0.5) {
+		t.Fatalf("expected net positive confidence, got %f", h1.Confidence)
+	}
+	if h1.Status != "contested" {
+		t.Fatalf("expected contested status when counterevidence present, got %s", h1.Status)
+	}
+	if h1.UniqueSupportCount != 2 || h1.UniqueCounterevidenceCount != 1 {
+		t.Fatalf("expected 2 support and 1 counter, got %d/%d", h1.UniqueSupportCount, h1.UniqueCounterevidenceCount)
+	}
+}
+
+func TestDeepDrillRankRecomputationOvertakesSeed(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillEvidenceGap, []ResearchResult{{MemoryID: "e1", Text: "beta", SourceType: "document"}}, 1.0)
+	h2 := hypothesisByID(state.Hypotheses, "H2")
+	h1 := hypothesisByID(state.Hypotheses, "H1")
+	if h2.Rank != 1 || h1.Rank != 2 {
+		t.Fatalf("expected H2 to overtake H1, got H2 rank=%d H1 rank=%d", h2.Rank, h1.Rank)
+	}
+	if h2.RankDelta != -1 {
+		t.Fatalf("expected H2 rank_delta -1, got %d", h2.RankDelta)
+	}
+}
+
+func TestDeepDrillTiedEvidenceRemainsDeterministic(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillEvidenceGap, []ResearchResult{
+		{MemoryID: "e1", Text: "alpha", SourceType: "document"},
+		{MemoryID: "e2", Text: "beta", SourceType: "document"},
+	}, 1.0)
+	h1 := hypothesisByID(state.Hypotheses, "H1")
+	h2 := hypothesisByID(state.Hypotheses, "H2")
+	if h1.Confidence != h2.Confidence {
+		t.Fatalf("expected tied confidence, got H1=%f H2=%f", h1.Confidence, h2.Confidence)
+	}
+	if h1.Rank != 1 || h2.Rank != 2 {
+		t.Fatalf("expected deterministic tie order H1 then H2, got H1=%d H2=%d", h1.Rank, h2.Rank)
+	}
+}
+
+func TestDeepDrillUnassociatedEvidenceDoesNotScore(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	applyModelUpdate(state, DeepDrillEvidenceGap, []ResearchResult{{MemoryID: "e1", Text: "unrelated zzz", SourceType: "document"}}, 1.0)
+	for _, h := range state.Hypotheses {
+		if h.Confidence != 0.5 || h.EvidenceStrength != 0.3 {
+			t.Fatalf("expected %s unchanged by unassociated evidence, got conf=%f ev=%f", h.ID, h.Confidence, h.EvidenceStrength)
+		}
+	}
+}
+
+func TestDeepDrillEvidenceClassificationDiagnostics(t *testing.T) {
+	hypotheses := []DeepDrillHypothesisState{
+		{ID: "H1", Statement: "The sacred-symbolic vocabulary was directly translated into E8 technical terminology"},
+		{ID: "H2", Statement: "The sacred-symbolic and E8 traditions developed independently and were later recombined in a synthesis"},
+		{ID: "H3", Statement: "The apparent bridge between sacred-symbolic and E8 terms is a retrieval artifact"},
+		{ID: "H4", Statement: "Generated summaries and chunking produced an apparent lineage that is absent from the underlying transcripts"},
+	}
+	evidence := []ResearchResult{
+		{MemoryID: "e-direct-support", Text: "the two traditions developed independently and were later recombined in a synthesis"},
+		{MemoryID: "e-direct-contradiction", Text: "the sacred vocabulary does not map onto E8 technical terminology; the bridge is contradicted by the transcripts"},
+		{MemoryID: "e-unrelated-thematic", Text: "the E8 lattice has 240 root vectors in eight dimensions"},
+		{MemoryID: "e-relational-paraphrase", Text: "the two traditions arose separately and were joined in the later synthesis"},
+		{MemoryID: "e-retrieval-artifact", Text: "the connection appears only in generated overviews and is absent from the underlying transcripts"},
+		{MemoryID: "e-opposite-meaning", Text: "the traditions never developed independently and were never recombined"},
+		{MemoryID: "e-empty-source", Text: ""},
+	}
+
+	rows := diagnoseEvidenceClassification(hypotheses, evidence)
+
+	if want := len(hypotheses) * len(evidence); len(rows) != want {
+		t.Fatalf("expected %d diagnostic rows, got %d", want, len(rows))
+	}
+
+	for _, row := range rows {
+		t.Logf("evidence=%-24s hypothesis=%s fields=%v lexical=%.2f concepts=%v relations=%v negation=%v relevance=%.2f relevant=%v polarity=%s reason=%q",
+			row.EvidenceID, row.HypothesisID, row.UsableTextFields, row.LexicalOverlap, row.ConceptMatches, row.RelationMatches, row.NegationSignals, row.RelevanceScore, row.Relevant, row.Polarity, row.Reason)
+	}
+
+	row := func(evidenceID, hypothesisID string) deepDrillClassificationRow {
+		for _, r := range rows {
+			if r.EvidenceID == evidenceID && r.HypothesisID == hypothesisID {
+				return r
+			}
+		}
+		t.Fatalf("missing diagnostic row for %s x %s", evidenceID, hypothesisID)
+		return deepDrillClassificationRow{}
+	}
+
+	if got := row("e-direct-support", "H2"); got.Polarity != "support" {
+		t.Fatalf("expected direct lexical support to classify H2 as support, got %s (relevance=%.2f)", got.Polarity, got.RelevanceScore)
+	}
+	if got := row("e-direct-contradiction", "H1"); got.Polarity != "counter" {
+		t.Fatalf("expected direct contradiction to classify H1 as counter, got %s (relevance=%.2f)", got.Polarity, got.RelevanceScore)
+	}
+	if got := row("e-unrelated-thematic", "H3"); got.Polarity != "none" {
+		t.Fatalf("expected unrelated thematic text to leave H3 unclassified, got %s", got.Polarity)
+	}
+	if got := row("e-relational-paraphrase", "H2"); got.Polarity != "support" {
+		t.Fatalf("expected relational paraphrase to support H2, got %s relations=%v", got.Polarity, got.RelationMatches)
+	}
+	if got := row("e-retrieval-artifact", "H4"); got.Polarity != "support" {
+		t.Fatalf("expected retrieval-artifact paraphrase to support H4, got %s relations=%v", got.Polarity, got.RelationMatches)
+	}
+	if got := row("e-opposite-meaning", "H2"); got.Polarity != "counter" {
+		t.Fatalf("expected opposite-meaning evidence to counter H2, got %s negation=%v", got.Polarity, got.NegationSignals)
+	}
+	if got := row("e-empty-source", "H1"); got.Reason != "no classifiable source text" {
+		t.Fatalf("expected empty source text to surface a diagnostic reason, got %q", got.Reason)
+	}
+}
+
+func TestDeepDrillRelationalParaphraseRelevantSupport(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H2", Statement: "branches developed independently then recombined"}
+	got := classifyEvidenceForHypothesis(h, ResearchResult{MemoryID: "e1", Text: "the two traditions arose separately and were joined in the later synthesis."})
+	if !got.Relevant || got.Polarity != deepDrillPolaritySupport {
+		t.Fatalf("expected relevant SUPPORT, got relevant=%v polarity=%s reason=%q concepts=%v relations=%v", got.Relevant, got.Polarity, got.Reason, got.ConceptMatches, got.RelationMatches)
+	}
+}
+
+func TestDeepDrillRetrievalArtifactParaphraseSupport(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H4", Statement: "hybrid lineage may be produced by summaries/chunking/ingestion/retrieval"}
+	got := classifyEvidenceForHypothesis(h, ResearchResult{MemoryID: "e1", Text: "the connection appears only in generated overviews and is absent from the underlying transcripts."})
+	if !got.Relevant || got.Polarity != deepDrillPolaritySupport {
+		t.Fatalf("expected relevant SUPPORT, got relevant=%v polarity=%s reason=%q concepts=%v relations=%v", got.Relevant, got.Polarity, got.Reason, got.ConceptMatches, got.RelationMatches)
+	}
+}
+
+func TestDeepDrillOppositeMeaningCounter(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H2", Statement: "branches developed independently then recombined"}
+	got := classifyEvidenceForHypothesis(h, ResearchResult{MemoryID: "e1", Text: "the branches never developed independently and were never recombined."})
+	if !got.Relevant || got.Polarity != deepDrillPolarityCounter {
+		t.Fatalf("expected relevant COUNTER, got relevant=%v polarity=%s reason=%q negation=%v", got.Relevant, got.Polarity, got.Reason, got.NegationSignals)
+	}
+}
+
+func TestDeepDrillE8SurvivesNormalization(t *testing.T) {
+	concepts := normalizeConcepts("the E8 technical terminology")
+	found := false
+	for _, concept := range concepts {
+		if concept == "e8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected e8 to survive normalization, got %v", concepts)
+	}
+}
+
+func TestDeepDrillDevelopedDevelopmentNormalizeTogether(t *testing.T) {
+	a := normalizeConcepts("developed")
+	b := normalizeConcepts("development")
+	if len(a) != 1 || len(b) != 1 || a[0] != "develop" || b[0] != "develop" {
+		t.Fatalf("expected developed/development to normalize to develop, got %v and %v", a, b)
+	}
+}
+
+func TestDeepDrillIndependentlySeparatelySameFamily(t *testing.T) {
+	a := normalizeConcepts("independently")
+	b := normalizeConcepts("separately")
+	if len(a) != 1 || len(b) != 1 || a[0] != "independent" || b[0] != "independent" {
+		t.Fatalf("expected independently/separately to normalize to independent, got %v and %v", a, b)
+	}
+}
+
+func TestDeepDrillRecombinedJoinedSameFamily(t *testing.T) {
+	a := normalizeConcepts("recombined")
+	b := normalizeConcepts("joined")
+	if len(a) != 1 || len(b) != 1 || a[0] != "recombine" || b[0] != "recombine" {
+		t.Fatalf("expected recombined/joined to normalize to recombine, got %v and %v", a, b)
+	}
+}
+
+func TestDeepDrillAmbiguousPolarity(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H1", Statement: "alpha"}
+	got := classifyEvidenceForHypothesis(h, ResearchResult{MemoryID: "e1", Text: "alpha may have been the source"})
+	if !got.Relevant || got.Polarity != deepDrillPolarityAmbiguous {
+		t.Fatalf("expected relevant AMBIGUOUS, got relevant=%v polarity=%s reason=%q", got.Relevant, got.Polarity, got.Reason)
+	}
+}
+
+func TestDeepDrillClassifiesFromSummaryAndQuote(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H2", Statement: "branches developed independently then recombined"}
+	item := ResearchResult{
+		MemoryID:    "e1",
+		Summary:     "the two traditions developed independently and recombined",
+		SourceQuote: "developed independently and recombined",
+	}
+	got := classifyEvidenceForHypothesis(h, item)
+	if !got.Relevant || got.Polarity != deepDrillPolaritySupport {
+		t.Fatalf("expected summary/quote-only evidence to support, got relevant=%v polarity=%s fields=%v reason=%q", got.Relevant, got.Polarity, got.UsableTextFields, got.Reason)
+	}
+	if len(got.UsableTextFields) < 2 {
+		t.Fatalf("expected multiple usable text fields, got %v", got.UsableTextFields)
+	}
+}
+
+func TestDeepDrillPolarityNotDerivedFromStrategy(t *testing.T) {
+	h := DeepDrillHypothesisState{ID: "H1", Statement: "alpha"}
+	// A counterevidence search can retrieve a chunk that merely restates the
+	// hypothesis vocabulary. Without a negation signal it must not be counter.
+	got := classifyEvidenceForHypothesis(h, ResearchResult{MemoryID: "e1", Text: "alpha present in the source"})
+	if got.Polarity != deepDrillPolaritySupport {
+		t.Fatalf("expected support without a negation signal, got %s", got.Polarity)
+	}
+}
+
+func TestDeepDrillRepeatedProvenanceInspectionNoRepeatPenalty(t *testing.T) {
+	state := newDefaultDeepDrillState("minddrill_research_thoughts")
+	state.Hypotheses = newScoredHypotheses()
+	evidence := []ResearchResult{{MemoryID: "e1", Text: "alpha", SourceType: "audio_overview"}}
+	applyModelUpdate(state, DeepDrillProvenanceGap, evidence, 0.42)
+	first := hypothesisByID(state.Hypotheses, "H1").Confidence
+	applyModelUpdate(state, DeepDrillProvenanceGap, evidence, 0.42)
+	second := hypothesisByID(state.Hypotheses, "H1").Confidence
+	if second < first {
+		t.Fatalf("expected no repeated provenance penalty, got %f then %f", first, second)
+	}
+	if second != first {
+		t.Fatalf("expected duplicate evidence to be ignored on re-inspection, got %f then %f", first, second)
 	}
 }
 
@@ -382,6 +711,126 @@ func TestDeepDrillFreezeAfterStrategiesExhausted(t *testing.T) {
 	}
 	if result.State.BranchStatus != DeepDrillFrozen {
 		t.Fatalf("expected freeze when no unused strategy class remains, got %s", result.State.BranchStatus)
+	}
+}
+
+func seedExhaustedDeepDrillSession(t *testing.T, runtime *MindDrillResearchRuntime, sessionID string, frozen bool) *DeepDrillState {
+	t.Helper()
+	_, _, state, err := runtime.prepareDeepDrillSession(context.Background(), DeepDrillPlanRequest{SessionID: sessionID, Collection: "corpus", ResearchQuestion: "trace", KnownBlockers: []DeepDrillUncertainty{DeepDrillProvenanceGap}})
+	if err != nil {
+		t.Fatalf("prepare session failed: %v", err)
+	}
+	for _, uncertainty := range []DeepDrillUncertainty{
+		DeepDrillEvidenceGap, DeepDrillProvenanceGap, DeepDrillChronologyGap, DeepDrillContradiction,
+		DeepDrillAmbiguousClassification, DeepDrillGenericSimilarity, DeepDrillRetrievalLimit, DeepDrillSourceQuality,
+	} {
+		for _, strategy := range strategyCandidates(uncertainty) {
+			state.StrategyHistory = append(state.StrategyHistory, DeepDrillStrategyOutcome{Strategy: strategy, Uncertainty: uncertainty, Question: "trace", InfoGain: DeepDrillInfoLow})
+			markStrategyExhausted(state, uncertainty, strategy)
+		}
+	}
+	state.CurrentUncertainty = DeepDrillProvenanceGap
+	if frozen {
+		state.BranchStatus = DeepDrillFrozen
+		state.FrozenReason = "test freeze"
+	}
+	session, _, err := runtime.requireBoundCollection(sessionID)
+	if err != nil {
+		t.Fatalf("require bound session failed: %v", err)
+	}
+	session.DeepDrill = state
+	runtime.sessions.put(session)
+	return state
+}
+
+func TestDeepDrillFreezeTerminatesEarlyAndUniqueSteps(t *testing.T) {
+	fixture := newDeepDrillQdrantFixture(t, false)
+	defer fixture.Close()
+	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
+	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
+	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
+	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 1)
+	seedExhaustedDeepDrillSession(t, runtime, "s1", false)
+	result, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1"}, Steps: 5})
+	if err != nil {
+		t.Fatalf("deepdrill run failed: %v", err)
+	}
+	if result.State.BranchStatus != DeepDrillFrozen {
+		t.Fatalf("expected frozen branch, got %s", result.State.BranchStatus)
+	}
+	if len(result.Steps) >= 5 {
+		t.Fatalf("expected run to terminate before max steps, got %d steps", len(result.Steps))
+	}
+	seen := map[int]bool{}
+	for _, step := range result.Steps {
+		if seen[step.Step] {
+			t.Fatalf("duplicate step number %d in results %#v", step.Step, result.Steps)
+		}
+		seen[step.Step] = true
+	}
+}
+
+func TestDeepDrillEmitsExactlyOneTerminalFreezeArtifact(t *testing.T) {
+	fixture := newDeepDrillQdrantFixture(t, false)
+	defer fixture.Close()
+	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
+	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
+	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
+	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 1)
+	seedExhaustedDeepDrillSession(t, runtime, "s1", false)
+	_, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1"}, Steps: 5})
+	if err != nil {
+		t.Fatalf("deepdrill run failed: %v", err)
+	}
+	stopCount := 0
+	for _, payload := range fixture.storedThoughtPayloads {
+		if strings.TrimSpace(asString(payload["type"])) == string(DeepDrillThoughtStopDecision) && strings.TrimSpace(asString(payload["strategy"])) == string(DeepDrillFreezeBranch) {
+			stopCount++
+		}
+	}
+	if stopCount != 1 {
+		t.Fatalf("expected exactly one terminal FREEZE_BRANCH artifact, got %d", stopCount)
+	}
+}
+
+func TestDeepDrillRerunningFrozenSessionDoesNoWork(t *testing.T) {
+	fixture := newDeepDrillQdrantFixture(t, false)
+	defer fixture.Close()
+	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
+	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
+	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
+	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 1)
+	state := seedExhaustedDeepDrillSession(t, runtime, "s1", true)
+	iterationsBefore := state.Iterations
+	result, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1"}, Steps: 5})
+	if err != nil {
+		t.Fatalf("deepdrill run failed: %v", err)
+	}
+	if len(result.Steps) != 0 {
+		t.Fatalf("expected zero new research steps for frozen session, got %d", len(result.Steps))
+	}
+	if result.State.BranchStatus != DeepDrillFrozen {
+		t.Fatalf("expected branch to stay frozen, got %s", result.State.BranchStatus)
+	}
+	if result.State.Iterations != iterationsBefore {
+		t.Fatalf("expected iterations unchanged, got %d want %d", result.State.Iterations, iterationsBefore)
+	}
+}
+
+func TestDeepDrillForceReopenPermitsExecution(t *testing.T) {
+	fixture := newDeepDrillQdrantFixture(t, false)
+	defer fixture.Close()
+	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
+	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
+	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
+	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 1)
+	seedExhaustedDeepDrillSession(t, runtime, "s1", true)
+	result, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1", ForceReopen: true}, Steps: 1})
+	if err != nil {
+		t.Fatalf("deepdrill run failed: %v", err)
+	}
+	if len(result.Steps) == 0 {
+		t.Fatal("expected force reopen to permit execution again")
 	}
 }
 
