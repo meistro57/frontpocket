@@ -449,6 +449,16 @@ func toJSON(value any) string {
 	return string(encoded)
 }
 
+func strategyStringsForDisplay(strategies []tools.DeepDrillStrategy) []string {
+	out := make([]string, 0, len(strategies))
+	for _, strategy := range strategies {
+		if trimmed := strings.TrimSpace(string(strategy)); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func formatDeepDrillThoughtList(list tools.DeepDrillThoughtList) string {
 	if len(list.Thoughts) == 0 {
 		return fmt.Sprintf("No DeepDrill thoughts matched in %s.", list.Collection)
@@ -534,6 +544,18 @@ func formatDeepDrillThoughtShow(thought tools.DeepDrillThought) string {
 			dup = "prior artifact"
 		}
 		fmt.Fprintf(&b, "Rediscovery relation: %s\n", dup)
+	}
+	if thought.PreviousUncertainty != "" || thought.ReclassifiedUncertainty != "" {
+		fmt.Fprintf(&b, "Reclassification: %s -> %s\n", thought.PreviousUncertainty, thought.ReclassifiedUncertainty)
+		if strings.TrimSpace(thought.ReclassificationReason) != "" {
+			fmt.Fprintf(&b, "Reclassification reason: %s\n", thought.ReclassificationReason)
+		}
+	}
+	if len(thought.StrategiesRemaining) > 0 {
+		fmt.Fprintf(&b, "Strategies remaining: %s\n", strings.Join(strategyStringsForDisplay(thought.StrategiesRemaining), ", "))
+	}
+	if len(thought.StrategiesExhausted) > 0 {
+		fmt.Fprintf(&b, "Strategies exhausted: %s\n", strings.Join(strategyStringsForDisplay(thought.StrategiesExhausted), ", "))
 	}
 	return strings.TrimSpace(b.String())
 }

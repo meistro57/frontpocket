@@ -70,6 +70,7 @@ type ResearchSession struct {
 	UnresolvedLeads   []string                    `json:"unresolved_leads,omitempty"`
 	LineageEdges      []string                    `json:"lineage_edges,omitempty"`
 	Notes             []string                    `json:"notes,omitempty"`
+	DeepDrill         *DeepDrillState             `json:"deepdrill,omitempty"`
 	UpdatedAt         time.Time                   `json:"updated_at"`
 }
 
@@ -111,11 +112,13 @@ type researchTool struct {
 }
 
 type MindDrillResearchRuntime struct {
-	client     *store.QdrantClient
-	embedder   embed.Embedder
-	vectorName string
-	logger     *slog.Logger
-	sessions   *researchSessionStore
+	client                  *store.QdrantClient
+	embedder                embed.Embedder
+	vectorName              string
+	logger                  *slog.Logger
+	sessions                *researchSessionStore
+	deepDrillThoughts       string
+	deepDrillFreezeAfterLow int
 }
 
 func (t *researchTool) Definition() loadout.ToolDefinition {
@@ -137,12 +140,24 @@ func NewMindDrillResearchRuntime(client *store.QdrantClient, embedder embed.Embe
 	if filePath == "" {
 		filePath = "data/minddrill_research_sessions.json"
 	}
+	thoughtCollection := strings.TrimSpace(os.Getenv("MINDDRILL_RESEARCH_THOUGHT_COLLECTION"))
+	if thoughtCollection == "" {
+		thoughtCollection = "minddrill_research_thoughts"
+	}
+	freezeAfter := 2
+	if raw := strings.TrimSpace(os.Getenv("DEEPDRILL_FREEZE_LOW_GAIN_AFTER")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			freezeAfter = parsed
+		}
+	}
 	return &MindDrillResearchRuntime{
-		client:     client,
-		embedder:   embedder,
-		vectorName: strings.TrimSpace(vectorName),
-		logger:     logger,
-		sessions:   newResearchSessionStore(filePath),
+		client:                  client,
+		embedder:                embedder,
+		vectorName:              strings.TrimSpace(vectorName),
+		logger:                  logger,
+		sessions:                newResearchSessionStore(filePath),
+		deepDrillThoughts:       thoughtCollection,
+		deepDrillFreezeAfterLow: freezeAfter,
 	}
 }
 

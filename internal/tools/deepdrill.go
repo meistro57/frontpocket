@@ -49,6 +49,15 @@ const (
 	DeepDrillCounterEvidenceScan DeepDrillStrategy = "COUNTEREVIDENCE_SCAN"
 	DeepDrillConfidenceDowngrade DeepDrillStrategy = "PROVENANCE_DOWNWEIGHT"
 	DeepDrillFreezeBranch        DeepDrillStrategy = "FREEZE_BRANCH"
+
+	DeepDrillSourceSequence        DeepDrillStrategy = "SOURCE_SEQUENCE"
+	DeepDrillSourceTypeProfile     DeepDrillStrategy = "SOURCE_TYPE_PROFILE"
+	DeepDrillMarkerPartition       DeepDrillStrategy = "MARKER_PARTITION"
+	DeepDrillVocabularyStrip       DeepDrillStrategy = "VOCABULARY_STRIP"
+	DeepDrillCounterevidenceSearch DeepDrillStrategy = "COUNTEREVIDENCE_SEARCH"
+	DeepDrillSourceComparison      DeepDrillStrategy = "SOURCE_COMPARISON"
+	DeepDrillBroadScroll           DeepDrillStrategy = "BROAD_SCROLL"
+	DeepDrillCollectionInspection  DeepDrillStrategy = "COLLECTION_INSPECTION"
 )
 
 type DeepDrillThoughtType string
@@ -69,6 +78,7 @@ const (
 	DeepDrillThoughtReopenDecision   DeepDrillThoughtType = "REOPEN_DECISION"
 	DeepDrillThoughtAnomaly          DeepDrillThoughtType = "ANOMALY"
 	DeepDrillThoughtLineageEdge      DeepDrillThoughtType = "LINEAGE_EDGE"
+	DeepDrillThoughtReclassify       DeepDrillThoughtType = "RECLASSIFY_UNCERTAINTY"
 )
 
 type DeepDrillInfoGain string
@@ -130,6 +140,15 @@ type DeepDrillStrategyOutcome struct {
 	Timestamp           time.Time            `json:"timestamp"`
 }
 
+type DeepDrillStrategyExhaustion struct {
+	Uncertainty         DeepDrillUncertainty `json:"uncertainty"`
+	Strategy            DeepDrillStrategy    `json:"strategy"`
+	ModelKey            string               `json:"model_key"`
+	ProvenanceTier      DeepDrillSourceTier  `json:"provenance_tier,omitempty"`
+	EvidenceFingerprint string               `json:"evidence_fingerprint,omitempty"`
+	Timestamp           time.Time            `json:"timestamp"`
+}
+
 type DeepDrillState struct {
 	ThoughtCollection      string                     `json:"thought_collection"`
 	BranchStatus           DeepDrillBranchStatus      `json:"branch_status"`
@@ -143,7 +162,15 @@ type DeepDrillState struct {
 	Iterations             int                        `json:"iterations"`
 	StrategyHistory        []DeepDrillStrategyOutcome `json:"strategy_history,omitempty"`
 	LastSeenProvenanceTier DeepDrillSourceTier        `json:"last_seen_provenance_tier,omitempty"`
-	LastUpdated            time.Time                  `json:"last_updated"`
+
+	PreviousUncertainty     DeepDrillUncertainty          `json:"previous_uncertainty,omitempty"`
+	ReclassifiedUncertainty DeepDrillUncertainty          `json:"reclassified_uncertainty,omitempty"`
+	ReclassificationReason  string                        `json:"reclassification_reason,omitempty"`
+	StrategiesRemaining     []DeepDrillStrategy           `json:"strategies_remaining,omitempty"`
+	StrategiesExhausted     []DeepDrillStrategy           `json:"strategies_exhausted,omitempty"`
+	StrategyExhaustion      []DeepDrillStrategyExhaustion `json:"strategy_exhaustion,omitempty"`
+
+	LastUpdated time.Time `json:"last_updated"`
 }
 
 type DeepDrillThought struct {
@@ -172,6 +199,12 @@ type DeepDrillThought struct {
 	Fingerprint        string                  `json:"fingerprint"`
 	EvidenceOrigin     DeepDrillEvidenceOrigin `json:"evidence_origin"`
 	DuplicateOfThought string                  `json:"duplicate_of_thought,omitempty"`
+
+	PreviousUncertainty     DeepDrillUncertainty `json:"previous_uncertainty,omitempty"`
+	ReclassifiedUncertainty DeepDrillUncertainty `json:"reclassified_uncertainty,omitempty"`
+	ReclassificationReason  string               `json:"reclassification_reason,omitempty"`
+	StrategiesRemaining     []DeepDrillStrategy  `json:"strategies_remaining,omitempty"`
+	StrategiesExhausted     []DeepDrillStrategy  `json:"strategies_exhausted,omitempty"`
 }
 
 type DeepDrillPlanRequest struct {
@@ -528,18 +561,82 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 	}
 	modelAfter := exportHypothesisModel(state.Hypotheses)
 	infoGain := scoreInformationGain(modelBefore, modelAfter, state, len(evidence), duplicateEvidence, topTier)
-	if infoGain == DeepDrillInfoLow {
+
+	diminishing := infoGain == DeepDrillInfoLow || duplicateEvidence
+	if diminishing {
 		state.ConsecutiveLowGain++
 	} else {
 		state.ConsecutiveLowGain = 0
 	}
-	if state.ConsecutiveLowGain >= rt.deepDrillFreezeAfterLow {
-		state.BranchStatus = DeepDrillFrozen
-		state.FrozenReason = fmt.Sprintf("%d consecutive low-gain runs", state.ConsecutiveLowGain)
+
+	reclassified := false
+	notFreezeStrategy := plan.SelectedStrategy != DeepDrillFreezeBranch
+	if diminishing && notFreezeStrategy {
+		markStrategyExhausted(state, plan.TopUncertainty, plan.SelectedStrategy)
 	}
+
+	remaining, exhausted := strategyAvailability(state, plan.TopUncertainty)
+	state.StrategiesRemaining = remaining
+	state.StrategiesExhausted = exhausted
+
+	// Moving to a fresh strategy within the same uncertainty is a strategy
+	// switch, not a repeated failure, so reset the consecutive low-gain counter.
+	if diminishing && len(remaining) > 0 {
+		state.ConsecutiveLowGain = 0
+	}
+
+	// Only reclassify once the current uncertainty class is fully exhausted.
+	if notFreezeStrategy && len(remaining) == 0 {
+		if newUncertainty, reason, changed := reclassifyUncertainty(state, evidence, provenanceScore, topTier, hasContradiction, plan.SelectedQuestion); changed {
+			if r2, e2 := strategyAvailability(state, newUncertainty); len(r2) > 0 {
+				state.PreviousUncertainty = plan.TopUncertainty
+				state.ReclassifiedUncertainty = newUncertainty
+				state.ReclassificationReason = reason
+				state.StrategiesRemaining = r2
+				state.StrategiesExhausted = e2
+				state.CurrentUncertainty = newUncertainty
+				state.ConsecutiveLowGain = 0
+				reclassified = true
+			}
+		}
+	}
+
 	state.Iterations++
 	state.LastUpdated = time.Now().UTC()
 	state.StrategyHistory = append(state.StrategyHistory, DeepDrillStrategyOutcome{Strategy: plan.SelectedStrategy, Uncertainty: plan.TopUncertainty, Question: plan.SelectedQuestion, InfoGain: infoGain, DuplicateEvidence: duplicateEvidence, EvidenceCount: len(evidence), EvidenceFingerprint: evidenceFingerprint, Timestamp: time.Now().UTC()})
+
+	if detectStrategyCycle(state.StrategyHistory) {
+		state.BranchStatus = DeepDrillFrozen
+		state.FrozenReason = "scheduler-level diminishing returns: repeating uncertainty/strategy/evidence cycle detected"
+	} else if notFreezeStrategy && !reclassified && len(remaining) == 0 {
+		state.BranchStatus = DeepDrillFrozen
+		state.FrozenReason = "all strategies exhausted and no actionable reclassification remains"
+	} else if !reclassified && state.ConsecutiveLowGain >= rt.deepDrillFreezeAfterLow {
+		state.BranchStatus = DeepDrillFrozen
+		state.FrozenReason = fmt.Sprintf("%d consecutive low-gain runs", state.ConsecutiveLowGain)
+	}
+
+	if reclassified {
+		reclassifyThought := DeepDrillThought{
+			Type:                    DeepDrillThoughtReclassify,
+			Question:                plan.SelectedQuestion,
+			UncertaintyClass:        plan.TopUncertainty,
+			Strategy:                plan.SelectedStrategy,
+			EvidenceSummary:         "DeepDrill reclassified the unresolved question to a more appropriate uncertainty class before freezing.",
+			PreviousUncertainty:     state.PreviousUncertainty,
+			ReclassifiedUncertainty: state.ReclassifiedUncertainty,
+			ReclassificationReason:  state.ReclassificationReason,
+			StrategiesRemaining:     state.StrategiesRemaining,
+			StrategiesExhausted:     state.StrategiesExhausted,
+			EvidenceOrigin:          DeepDrillResearchThought,
+			Status:                  "reclassified",
+			NextAction:              "run strategy for reclassified uncertainty",
+		}
+		if _, _, err := rt.storeDeepDrillThought(ctx, session, state, reclassifyThought); err != nil {
+			return DeepDrillStepResult{}, nil, err
+		}
+		thoughtCount++
+	}
 
 	revisionThought := DeepDrillThought{
 		Type:             DeepDrillThoughtModelRevision,
@@ -554,6 +651,13 @@ func (rt *MindDrillResearchRuntime) executeDeepDrillStep(ctx context.Context, pl
 		EvidenceOrigin:   DeepDrillResearchThought,
 		Status:           strings.ToLower(string(state.BranchStatus)),
 		NextAction:       nextActionFromState(state),
+	}
+	if reclassified {
+		revisionThought.PreviousUncertainty = state.PreviousUncertainty
+		revisionThought.ReclassifiedUncertainty = state.ReclassifiedUncertainty
+		revisionThought.ReclassificationReason = state.ReclassificationReason
+		revisionThought.StrategiesRemaining = state.StrategiesRemaining
+		revisionThought.StrategiesExhausted = state.StrategiesExhausted
 	}
 	if _, _, err := rt.storeDeepDrillThought(ctx, session, state, revisionThought); err != nil {
 		return DeepDrillStepResult{}, nil, err
@@ -623,6 +727,9 @@ func identifyHighestValueUncertainty(session ResearchSession, state *DeepDrillSt
 	}
 	if state.BranchStatus == DeepDrillFrozen {
 		return DeepDrillDiminishingReturns
+	}
+	if strings.TrimSpace(string(state.ReclassifiedUncertainty)) != "" && state.ReclassifiedUncertainty != DeepDrillDiminishingReturns {
+		return state.ReclassifiedUncertainty
 	}
 	if state.ConsecutiveLowGain >= 1 {
 		return DeepDrillDiminishingReturns
@@ -716,21 +823,39 @@ func selectStrategy(state *DeepDrillState, uncertainty DeepDrillUncertainty) (De
 	if len(candidates) == 0 {
 		return DeepDrillSemanticBroad, "default fallback", false
 	}
+	// Exclude exhausted strategies before ranking so a failed strategy never
+	// wins selection while unused materially distinct strategies remain.
+	available := make([]DeepDrillStrategy, 0, len(candidates))
+	if state == nil {
+		available = append(available, candidates...)
+	} else {
+		for _, strategy := range candidates {
+			if !isStrategyExhausted(state, uncertainty, strategy) {
+				available = append(available, strategy)
+			}
+		}
+	}
+	if len(available) == 0 {
+		return DeepDrillFreezeBranch, "all strategies for uncertainty are exhausted", true
+	}
 	if state == nil || len(state.StrategyHistory) == 0 {
-		return candidates[0], "no prior runs, using primary strategy for uncertainty", false
+		return available[0], "no prior runs, using primary strategy for uncertainty", false
 	}
 	usage := make(map[DeepDrillStrategy]int)
 	success := make(map[DeepDrillStrategy]int)
 	for _, entry := range state.StrategyHistory {
+		if entry.Uncertainty != uncertainty {
+			continue
+		}
 		usage[entry.Strategy]++
 		if entry.InfoGain == DeepDrillInfoMedium || entry.InfoGain == DeepDrillInfoHigh {
 			success[entry.Strategy]++
 		}
 	}
-	best := candidates[0]
+	best := available[0]
 	bestScore := -1
 	reused := false
-	for _, strategy := range candidates {
+	for _, strategy := range available {
 		score := success[strategy]*3 - usage[strategy]
 		if score > bestScore {
 			best = strategy
@@ -746,19 +871,19 @@ func strategyCandidates(uncertainty DeepDrillUncertainty) []DeepDrillStrategy {
 	case DeepDrillEvidenceGap:
 		return []DeepDrillStrategy{DeepDrillSemanticBroad, DeepDrillKeywordTargeted, DeepDrillDocumentExpansion, DeepDrillCrossDocument}
 	case DeepDrillRetrievalLimit:
-		return []DeepDrillStrategy{DeepDrillInspectCollection, DeepDrillCrossDocument, DeepDrillNeighborChunks}
+		return []DeepDrillStrategy{DeepDrillBroadScroll, DeepDrillCollectionInspection, DeepDrillInspectCollection, DeepDrillCrossDocument}
 	case DeepDrillAmbiguousClassification:
-		return []DeepDrillStrategy{DeepDrillPartitionTest, DeepDrillNegativeControl, DeepDrillCrossDocument}
+		return []DeepDrillStrategy{DeepDrillMarkerPartition, DeepDrillNegativeControl, DeepDrillPartitionTest, DeepDrillCrossDocument}
 	case DeepDrillGenericSimilarity:
-		return []DeepDrillStrategy{DeepDrillNegativeControl, DeepDrillKeywordTargeted, DeepDrillCrossDocument}
+		return []DeepDrillStrategy{DeepDrillVocabularyStrip, DeepDrillNegativeControl, DeepDrillKeywordTargeted, DeepDrillCrossDocument}
 	case DeepDrillChronologyGap:
-		return []DeepDrillStrategy{DeepDrillProvenanceTrace, DeepDrillChronologyTrace, DeepDrillTimestampTrace, DeepDrillDocumentExpansion}
+		return []DeepDrillStrategy{DeepDrillProvenanceTrace, DeepDrillSourceSequence, DeepDrillChronologyTrace, DeepDrillTimestampTrace, DeepDrillDocumentExpansion}
 	case DeepDrillProvenanceGap:
 		return []DeepDrillStrategy{DeepDrillProvenanceTrace, DeepDrillProvenanceProfile, DeepDrillRawSourceLookup, DeepDrillConfidenceDowngrade}
 	case DeepDrillContradiction:
-		return []DeepDrillStrategy{DeepDrillCounterEvidenceScan, DeepDrillCrossDocument, DeepDrillKeywordTargeted}
+		return []DeepDrillStrategy{DeepDrillCounterevidenceSearch, DeepDrillSourceComparison, DeepDrillCounterEvidenceScan, DeepDrillCrossDocument}
 	case DeepDrillSourceQuality:
-		return []DeepDrillStrategy{DeepDrillProvenanceTrace, DeepDrillProvenanceProfile, DeepDrillConfidenceDowngrade}
+		return []DeepDrillStrategy{DeepDrillProvenanceTrace, DeepDrillSourceTypeProfile, DeepDrillProvenanceProfile, DeepDrillConfidenceDowngrade}
 	case DeepDrillDiminishingReturns:
 		return []DeepDrillStrategy{DeepDrillFreezeBranch}
 	default:
@@ -862,6 +987,45 @@ func (rt *MindDrillResearchRuntime) runDeepDrillStrategy(ctx context.Context, co
 		return results, warnings, err
 	case DeepDrillConfidenceDowngrade:
 		warnings = append(warnings, "provenance-weighted confidence downgrade strategy executed")
+		return nil, warnings, nil
+	case DeepDrillSourceSequence:
+		results, runWarnings, err := rt.keywordSearch(ctx, collection, question+" sequence ordering", 12, nil, nil)
+		warnings = append(warnings, runWarnings...)
+		return sortByCreation(results), warnings, err
+	case DeepDrillSourceTypeProfile:
+		results, runWarnings, err := rt.semanticSearch(ctx, collection, question, 12, nil, nil, 0, false)
+		warnings = append(warnings, runWarnings...)
+		warnings = append(warnings, provenanceProfileNote(results))
+		return results, warnings, err
+	case DeepDrillMarkerPartition:
+		results, runWarnings, err := rt.keywordSearch(ctx, collection, "E8 sacred translator bridge", 25, nil, nil)
+		warnings = append(warnings, runWarnings...)
+		return results, warnings, err
+	case DeepDrillVocabularyStrip:
+		results, runWarnings, err := rt.keywordSearch(ctx, collection, stripGenericVocabulary(question), 12, nil, nil)
+		warnings = append(warnings, runWarnings...)
+		return results, warnings, err
+	case DeepDrillCounterevidenceSearch:
+		results, runWarnings, err := rt.keywordSearch(ctx, collection, question+" contradiction counterevidence however", 12, nil, nil)
+		warnings = append(warnings, runWarnings...)
+		return results, warnings, err
+	case DeepDrillSourceComparison:
+		results, runWarnings, err := rt.semanticSearch(ctx, collection, question, 12, nil, nil, 0, false)
+		warnings = append(warnings, runWarnings...)
+		return results, warnings, err
+	case DeepDrillBroadScroll:
+		report, err := rt.inspectCollection(ctx, collection, 600)
+		if err != nil {
+			return nil, warnings, err
+		}
+		warnings = append(warnings, fmt.Sprintf("broad scroll points=%d documents=%d missing_provenance=%d", report.ChunksOrVectors, report.DocumentsDetected, len(report.MissingProvenanceFields)))
+		return nil, warnings, nil
+	case DeepDrillCollectionInspection:
+		report, err := rt.inspectCollection(ctx, collection, 600)
+		if err != nil {
+			return nil, warnings, err
+		}
+		warnings = append(warnings, fmt.Sprintf("collection inspection points=%d documents=%d missing_provenance=%d", report.ChunksOrVectors, report.DocumentsDetected, len(report.MissingProvenanceFields)))
 		return nil, warnings, nil
 	case DeepDrillFreezeBranch:
 		warnings = append(warnings, "branch flagged for freeze due to diminishing returns")
@@ -968,6 +1132,21 @@ func deepDrillThoughtPayload(thought DeepDrillThought) map[string]any {
 	}
 	if thought.DuplicateOfThought != "" {
 		payload["duplicate_of_thought"] = thought.DuplicateOfThought
+	}
+	if thought.PreviousUncertainty != "" {
+		payload["previous_uncertainty"] = string(thought.PreviousUncertainty)
+	}
+	if thought.ReclassifiedUncertainty != "" {
+		payload["reclassified_uncertainty"] = string(thought.ReclassifiedUncertainty)
+	}
+	if thought.ReclassificationReason != "" {
+		payload["reclassification_reason"] = thought.ReclassificationReason
+	}
+	if len(thought.StrategiesRemaining) > 0 {
+		payload["strategies_remaining"] = strategyStrings(thought.StrategiesRemaining)
+	}
+	if len(thought.StrategiesExhausted) > 0 {
+		payload["strategies_exhausted"] = strategyStrings(thought.StrategiesExhausted)
 	}
 	return payload
 }
@@ -1353,6 +1532,174 @@ func nextActionFromState(state *DeepDrillState) string {
 		return "switch strategy class"
 	}
 	return "continue"
+}
+
+func hasChronologyQuestion(question string) bool {
+	q := strings.ToLower(strings.TrimSpace(question))
+	return strings.Contains(q, "earliest") || strings.Contains(q, "first") || strings.Contains(q, "chronolog") ||
+		strings.Contains(q, "timestamp") || strings.Contains(q, "sequence") || strings.Contains(q, "draft") ||
+		strings.Contains(q, "lineage") || strings.Contains(q, "before") || strings.Contains(q, "after")
+}
+
+func isWeakProvenanceTier(tier DeepDrillSourceTier) bool {
+	switch tier {
+	case DeepDrillDerivedSummary, DeepDrillAudioOverview, DeepDrillPresentationSumm, DeepDrillAISynthesis:
+		return true
+	default:
+		return false
+	}
+}
+
+func stripGenericVocabulary(question string) string {
+	generic := []string{"generic", "structure", "framework", "architecture", "generally", "broadly", "typically"}
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(question)))
+	kept := make([]string, 0, len(fields))
+	for _, field := range fields {
+		skip := false
+		for _, term := range generic {
+			if field == term {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			kept = append(kept, field)
+		}
+	}
+	if len(kept) == 0 {
+		return strings.TrimSpace(question)
+	}
+	return strings.Join(kept, " ")
+}
+
+func deepDrillModelKey(state *DeepDrillState) string {
+	parts := make([]string, 0, len(state.Hypotheses)+1)
+	if state != nil {
+		parts = append(parts, "tier:"+string(state.LastSeenProvenanceTier))
+		for _, hypothesis := range state.Hypotheses {
+			parts = append(parts, fmt.Sprintf("%s:%d:%s", hypothesis.ID, hypothesis.Rank, strings.TrimSpace(hypothesis.Status)))
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
+func isStrategyExhausted(state *DeepDrillState, uncertainty DeepDrillUncertainty, strategy DeepDrillStrategy) bool {
+	if state == nil {
+		return false
+	}
+	modelKey := deepDrillModelKey(state)
+	for _, record := range state.StrategyExhaustion {
+		if record.Uncertainty != uncertainty || record.Strategy != strategy || record.ModelKey != modelKey {
+			continue
+		}
+		// A higher provenance tier invalidates prior exhaustion: the strategy
+		// has new, stronger evidence to work with.
+		if compareSourceTier(state.LastSeenProvenanceTier, record.ProvenanceTier) > 0 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func markStrategyExhausted(state *DeepDrillState, uncertainty DeepDrillUncertainty, strategy DeepDrillStrategy) {
+	if state == nil {
+		return
+	}
+	modelKey := deepDrillModelKey(state)
+	for idx := range state.StrategyExhaustion {
+		record := &state.StrategyExhaustion[idx]
+		if record.Uncertainty == uncertainty && record.Strategy == strategy && record.ModelKey == modelKey {
+			record.Timestamp = time.Now().UTC()
+			return
+		}
+	}
+	state.StrategyExhaustion = append(state.StrategyExhaustion, DeepDrillStrategyExhaustion{
+		Uncertainty:    uncertainty,
+		Strategy:       strategy,
+		ModelKey:       modelKey,
+		ProvenanceTier: state.LastSeenProvenanceTier,
+		Timestamp:      time.Now().UTC(),
+	})
+}
+
+func strategyAvailability(state *DeepDrillState, uncertainty DeepDrillUncertainty) (remaining, exhausted []DeepDrillStrategy) {
+	remaining = []DeepDrillStrategy{}
+	exhausted = []DeepDrillStrategy{}
+	if state == nil {
+		return remaining, exhausted
+	}
+	for _, strategy := range strategyCandidates(uncertainty) {
+		if isStrategyExhausted(state, uncertainty, strategy) {
+			exhausted = append(exhausted, strategy)
+		} else {
+			remaining = append(remaining, strategy)
+		}
+	}
+	return remaining, exhausted
+}
+
+func strategyOutcomeSignature(entry DeepDrillStrategyOutcome) string {
+	return strings.Join([]string{string(entry.Uncertainty), string(entry.Strategy), strings.TrimSpace(entry.EvidenceFingerprint)}, "|")
+}
+
+func strategyOutcomeBlockEqual(a, b []DeepDrillStrategyOutcome) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for idx := range a {
+		if strategyOutcomeSignature(a[idx]) != strategyOutcomeSignature(b[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+func detectStrategyCycle(history []DeepDrillStrategyOutcome) bool {
+	n := len(history)
+	for length := 2; length <= n/2; length++ {
+		if strategyOutcomeBlockEqual(history[n-length:], history[n-2*length:n-length]) {
+			return true
+		}
+	}
+	return false
+}
+
+func reclassifyUncertainty(state *DeepDrillState, evidence []ResearchResult, provenanceScore float64, topTier DeepDrillSourceTier, hasContradiction bool, question string) (DeepDrillUncertainty, string, bool) {
+	current := DeepDrillEvidenceGap
+	if state != nil && strings.TrimSpace(string(state.CurrentUncertainty)) != "" {
+		current = state.CurrentUncertainty
+	}
+
+	weakProvenance := provenanceScore > 0 && provenanceScore < 0.6
+	weakTier := isWeakProvenanceTier(topTier)
+	noCoverage := len(evidence) == 0
+	chronologyQuestion := hasChronologyQuestion(question)
+
+	type signal struct {
+		uncertainty DeepDrillUncertainty
+		reason      string
+		applicable  bool
+	}
+	signals := []signal{
+		{DeepDrillContradiction, "retrieved evidence contains contradiction signals", hasContradiction},
+		{DeepDrillRetrievalLimit, "strategy returned no retrieval coverage for the unresolved claim", noCoverage},
+		{DeepDrillProvenanceGap, "retrieved evidence depends on derived or weak provenance", weakProvenance || weakTier},
+		{DeepDrillChronologyGap, "chronology remains ambiguous despite available provenance", chronologyQuestion && !weakProvenance && !weakTier},
+		{DeepDrillSourceQuality, "retrieved source quality is unverifiable", topTier == DeepDrillUnknownSourceTier},
+		{DeepDrillGenericSimilarity, "retrieved evidence resembles generic surface similarity rather than discriminating detail", !hasContradiction && !noCoverage && !weakProvenance && !weakTier},
+	}
+
+	for _, signal := range signals {
+		if !signal.applicable {
+			continue
+		}
+		if signal.uncertainty == current || signal.uncertainty == DeepDrillDiminishingReturns {
+			continue
+		}
+		return signal.uncertainty, signal.reason, true
+	}
+	return current, "", false
 }
 
 func strategyEvidenceFingerprint(strategy DeepDrillStrategy, question string, evidence []ResearchResult) string {
@@ -2056,6 +2403,12 @@ func deepDrillThoughtFromPayload(payload map[string]any) DeepDrillThought {
 		Fingerprint:        strings.TrimSpace(asString(firstPayloadValue(payload, []string{"fingerprint"}))),
 		EvidenceOrigin:     DeepDrillEvidenceOrigin(strings.TrimSpace(asString(firstPayloadValue(payload, []string{"evidence_origin"})))),
 		DuplicateOfThought: strings.TrimSpace(asString(firstPayloadValue(payload, []string{"duplicate_of_thought"}))),
+
+		PreviousUncertainty:     DeepDrillUncertainty(strings.TrimSpace(asString(firstPayloadValue(payload, []string{"previous_uncertainty"})))),
+		ReclassifiedUncertainty: DeepDrillUncertainty(strings.TrimSpace(asString(firstPayloadValue(payload, []string{"reclassified_uncertainty"})))),
+		ReclassificationReason:  strings.TrimSpace(asString(firstPayloadValue(payload, []string{"reclassification_reason"}))),
+		StrategiesRemaining:     parseDeepDrillStrategies(firstPayloadValue(payload, []string{"strategies_remaining"})),
+		StrategiesExhausted:     parseDeepDrillStrategies(firstPayloadValue(payload, []string{"strategies_exhausted"})),
 	}
 	if thought.Timestamp.IsZero() {
 		thought.Timestamp = parseAnyTime(firstPayloadValue(payload, []string{"modified_at", "updated_at"}))
@@ -2168,6 +2521,33 @@ func asStringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func strategyStrings(strategies []DeepDrillStrategy) []string {
+	if len(strategies) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(strategies))
+	for _, strategy := range strategies {
+		if trimmed := strings.TrimSpace(string(strategy)); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func parseDeepDrillStrategies(value any) []DeepDrillStrategy {
+	parts := asStringSlice(value)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]DeepDrillStrategy, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, DeepDrillStrategy(trimmed))
+		}
+	}
+	return out
 }
 
 func asMap(value any) map[string]any {

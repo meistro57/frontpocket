@@ -9,6 +9,9 @@ Delivered in this branch:
 - Added `minddrill deepdrill provenance <thought_id>` with optional `--source <source_id>`, `--session`, `--collection`, `--limit`, and `--json`.
 - Added provenance report sections for source type, upstream/downstream/related edges, chronology signals, weaknesses, and confidence.
 - Added scheduler routing so `PROVENANCE_GAP`, `CHRONOLOGY_GAP`, and `SOURCE_QUALITY` can auto-select `PROVENANCE_TRACE`.
+- Added uncertainty reclassification before freeze: low/duplicate evidence reclassifies the unresolved question to a more appropriate uncertainty class instead of freezing the branch.
+- Added strategy exhaustion enforcement: failed strategies are excluded from selection (scoped by uncertainty, model state, and evidence tier), with a meaningful model change or higher provenance tier reopening them.
+- Added scheduler-level cycle detection so repeating uncertainty/strategy/evidence patterns freeze instead of looping.
 
 ## Sprint 1 — Trust and Control
 

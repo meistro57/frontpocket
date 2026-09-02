@@ -235,23 +235,153 @@ func TestDeepDrillDuplicateFingerprintDetection(t *testing.T) {
 	}
 }
 
-func TestDeepDrillFreezeAfterRepeatedLowGain(t *testing.T) {
+func TestDeepDrillExhaustedStrategyNotReselected(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillProvenanceGap, ThoughtCollection: "minddrill_research_thoughts"}
+	markStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace)
+	selected, _, _ := selectStrategy(state, DeepDrillProvenanceGap)
+	if selected == DeepDrillProvenanceTrace {
+		t.Fatalf("exhausted PROVENANCE_TRACE must not be selected again, got %s", selected)
+	}
+	if selected != DeepDrillProvenanceProfile {
+		t.Fatalf("expected next remaining strategy PROVENANCE_PROFILE, got %s", selected)
+	}
+}
+
+func TestDeepDrillProvenanceGapProgression(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillProvenanceGap, ThoughtCollection: "minddrill_research_thoughts"}
+	want := []DeepDrillStrategy{
+		DeepDrillProvenanceTrace,
+		DeepDrillProvenanceProfile,
+		DeepDrillRawSourceLookup,
+		DeepDrillConfidenceDowngrade,
+	}
+	for idx, expected := range want {
+		selected, _, _ := selectStrategy(state, DeepDrillProvenanceGap)
+		if selected != expected {
+			t.Fatalf("step %d: expected %s, got %s", idx, expected, selected)
+		}
+		markStrategyExhausted(state, DeepDrillProvenanceGap, expected)
+	}
+	selected, _, _ := selectStrategy(state, DeepDrillProvenanceGap)
+	if selected != DeepDrillFreezeBranch {
+		t.Fatalf("expected freeze fallback when class exhausted, got %s", selected)
+	}
+}
+
+func TestDeepDrillLeavingAndReturningPreservesExhaustion(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillProvenanceGap, ThoughtCollection: "minddrill_research_thoughts"}
+	markStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace)
+	// Leave the uncertainty and come back without a model change.
+	state.CurrentUncertainty = DeepDrillContradiction
+	state.CurrentUncertainty = DeepDrillProvenanceGap
+	if !isStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace) {
+		t.Fatal("expected PROVENANCE_TRACE to remain exhausted after leaving and returning")
+	}
+	selected, _, _ := selectStrategy(state, DeepDrillProvenanceGap)
+	if selected == DeepDrillProvenanceTrace {
+		t.Fatalf("expected PROVENANCE_TRACE to stay excluded, got %s", selected)
+	}
+}
+
+func TestDeepDrillNewEvidenceTierReopensStrategy(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillProvenanceGap, ThoughtCollection: "minddrill_research_thoughts", LastSeenProvenanceTier: DeepDrillAudioOverview}
+	markStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace)
+	if !isStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace) {
+		t.Fatal("expected PROVENANCE_TRACE exhausted at derived provenance tier")
+	}
+	state.LastSeenProvenanceTier = DeepDrillRawSource
+	if isStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace) {
+		t.Fatal("expected higher provenance tier to reopen PROVENANCE_TRACE")
+	}
+}
+
+func TestDetectStrategyCycle(t *testing.T) {
+	mk := func(u DeepDrillUncertainty, s DeepDrillStrategy, fp string) DeepDrillStrategyOutcome {
+		return DeepDrillStrategyOutcome{Uncertainty: u, Strategy: s, EvidenceFingerprint: fp}
+	}
+	cyclic := []DeepDrillStrategyOutcome{
+		mk(DeepDrillContradiction, DeepDrillSourceComparison, "fp-A"),
+		mk(DeepDrillProvenanceGap, DeepDrillProvenanceTrace, "fp-B"),
+		mk(DeepDrillContradiction, DeepDrillSourceComparison, "fp-A"),
+		mk(DeepDrillProvenanceGap, DeepDrillProvenanceTrace, "fp-B"),
+	}
+	if !detectStrategyCycle(cyclic) {
+		t.Fatal("expected A->B->A->B cycle to be detected")
+	}
+	acyclic := []DeepDrillStrategyOutcome{
+		mk(DeepDrillContradiction, DeepDrillSourceComparison, "fp-A"),
+		mk(DeepDrillProvenanceGap, DeepDrillProvenanceTrace, "fp-B"),
+		mk(DeepDrillContradiction, DeepDrillCounterevidenceSearch, "fp-C"),
+		mk(DeepDrillProvenanceGap, DeepDrillProvenanceProfile, "fp-D"),
+	}
+	if detectStrategyCycle(acyclic) {
+		t.Fatal("expected non-repeating sequence to not be a cycle")
+	}
+}
+
+func TestDeepDrillMovesToNextStrategyAfterDuplicateLowGain(t *testing.T) {
 	fixture := newDeepDrillQdrantFixture(t, false)
 	defer fixture.Close()
 	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
 	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
 	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
 	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 2)
-	runReq := DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1", Collection: "corpus", ResearchQuestion: "trace earliest bridge", KnownBlockers: []DeepDrillUncertainty{DeepDrillChronologyGap}}, Steps: 2}
-	result, err := runtime.DeepDrillRun(context.Background(), runReq)
+	result, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1", Collection: "corpus", ResearchQuestion: "trace", KnownBlockers: []DeepDrillUncertainty{DeepDrillProvenanceGap}}, Steps: 2})
 	if err != nil {
 		t.Fatalf("deepdrill run failed: %v", err)
 	}
 	if len(result.Steps) != 2 {
 		t.Fatalf("expected 2 steps, got %d", len(result.Steps))
 	}
+	if result.Steps[0].Strategy != DeepDrillProvenanceTrace {
+		t.Fatalf("expected first strategy PROVENANCE_TRACE, got %s", result.Steps[0].Strategy)
+	}
+	if result.Steps[1].Strategy == DeepDrillProvenanceTrace {
+		t.Fatalf("expected exhausted PROVENANCE_TRACE not to recur, got %s", result.Steps[1].Strategy)
+	}
+	exhaustedSet := map[DeepDrillStrategy]bool{}
+	for _, strategy := range result.State.StrategiesExhausted {
+		exhaustedSet[strategy] = true
+	}
+	if !exhaustedSet[DeepDrillProvenanceTrace] {
+		t.Fatalf("expected PROVENANCE_TRACE in strategies_exhausted, got %#v", result.State.StrategiesExhausted)
+	}
+}
+
+func TestDeepDrillFreezeAfterStrategiesExhausted(t *testing.T) {
+	fixture := newDeepDrillQdrantFixture(t, false)
+	defer fixture.Close()
+	sessionPath := filepath.Join(t.TempDir(), "deepdrill_sessions.json")
+	t.Setenv("MINDDRILL_RESEARCH_SESSION_FILE", sessionPath)
+	runtime := NewMindDrillResearchRuntime(store.NewQdrantClient(fixture.server.URL), researchTestEmbedder{}, "", nil)
+	runtime.ConfigureDeepDrill("minddrill_research_thoughts", 1)
+	_, _, state, err := runtime.prepareDeepDrillSession(context.Background(), DeepDrillPlanRequest{SessionID: "s1", Collection: "corpus", ResearchQuestion: "trace", KnownBlockers: []DeepDrillUncertainty{DeepDrillProvenanceGap}})
+	if err != nil {
+		t.Fatalf("prepare session failed: %v", err)
+	}
+	// Exhaust every strategy across every uncertainty so reclassification has nowhere to go.
+	for _, uncertainty := range []DeepDrillUncertainty{
+		DeepDrillEvidenceGap, DeepDrillProvenanceGap, DeepDrillChronologyGap, DeepDrillContradiction,
+		DeepDrillAmbiguousClassification, DeepDrillGenericSimilarity, DeepDrillRetrievalLimit, DeepDrillSourceQuality,
+	} {
+		for _, strategy := range strategyCandidates(uncertainty) {
+			state.StrategyHistory = append(state.StrategyHistory, DeepDrillStrategyOutcome{Strategy: strategy, Uncertainty: uncertainty, Question: "trace", InfoGain: DeepDrillInfoLow})
+			markStrategyExhausted(state, uncertainty, strategy)
+		}
+	}
+	state.CurrentUncertainty = DeepDrillProvenanceGap
+	session, _, err := runtime.requireBoundCollection("s1")
+	if err != nil {
+		t.Fatalf("require bound session failed: %v", err)
+	}
+	session.DeepDrill = state
+	runtime.sessions.put(session)
+	result, err := runtime.DeepDrillRun(context.Background(), DeepDrillRunRequest{DeepDrillPlanRequest: DeepDrillPlanRequest{SessionID: "s1"}, Steps: 1})
+	if err != nil {
+		t.Fatalf("deepdrill run failed: %v", err)
+	}
 	if result.State.BranchStatus != DeepDrillFrozen {
-		t.Fatalf("expected branch frozen after repeated low gain, got %s", result.State.BranchStatus)
+		t.Fatalf("expected freeze when no unused strategy class remains, got %s", result.State.BranchStatus)
 	}
 }
 
@@ -565,6 +695,43 @@ func TestBuildDeepDrillProvenanceTraceRawSourceHasHigherConfidenceThanDerived(t 
 	derived := buildDeepDrillProvenanceTrace("doc-derived", DeepDrillProvenanceTraceResult{Collection: "corpus"}, []deepDrillProvenanceNode{{SourceID: "doc-derived", DocumentID: "doc-derived", SourceType: "audio_overview", SourceTitle: "Core Notes", FamilyID: sourceFamilyKey("Core Notes")}})
 	if raw.Confidence <= derived.Confidence {
 		t.Fatalf("expected raw source confidence (%f) to exceed derived confidence (%f)", raw.Confidence, derived.Confidence)
+	}
+}
+
+func TestReclassifyUncertaintyIsEvidenceDriven(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillEvidenceGap, ThoughtCollection: "minddrill_research_thoughts"}
+	// Weak derived provenance reclassifies an evidence gap into a provenance gap.
+	got, reason, changed := reclassifyUncertainty(state, []ResearchResult{{SourceType: "audio_overview"}}, 0.42, DeepDrillAudioOverview, false, "trace earliest bridge")
+	if !changed || got != DeepDrillProvenanceGap || reason == "" {
+		t.Fatalf("expected provenance gap reclassification, got %s changed=%v reason=%q", got, changed, reason)
+	}
+	// Contradiction signals take priority over provenance.
+	got, _, changed = reclassifyUncertainty(state, []ResearchResult{{Text: "this contradicts the earlier claim"}}, 0.9, DeepDrillRawSource, true, "which claim holds")
+	if !changed || got != DeepDrillContradiction {
+		t.Fatalf("expected contradiction reclassification, got %s changed=%v", got, changed)
+	}
+	// No coverage points to retrieval limit.
+	got, _, changed = reclassifyUncertainty(state, nil, 0, DeepDrillUnknownSourceTier, false, "trace")
+	if !changed || got != DeepDrillRetrievalLimit {
+		t.Fatalf("expected retrieval limit reclassification, got %s changed=%v", got, changed)
+	}
+	// Same class does not count as a reclassification.
+	state.CurrentUncertainty = DeepDrillProvenanceGap
+	_, _, changed = reclassifyUncertainty(state, []ResearchResult{{SourceType: "audio_overview"}}, 0.42, DeepDrillAudioOverview, false, "trace")
+	if changed {
+		t.Fatalf("expected no reclassification when class is unchanged")
+	}
+}
+
+func TestStrategyAvailabilityTracksExhaustedAndRemaining(t *testing.T) {
+	state := &DeepDrillState{CurrentUncertainty: DeepDrillProvenanceGap, ThoughtCollection: "minddrill_research_thoughts"}
+	markStrategyExhausted(state, DeepDrillProvenanceGap, DeepDrillProvenanceTrace)
+	remaining, exhausted := strategyAvailability(state, DeepDrillProvenanceGap)
+	if len(exhausted) != 1 || exhausted[0] != DeepDrillProvenanceTrace {
+		t.Fatalf("expected provenance trace exhausted, got %#v", exhausted)
+	}
+	if len(remaining) == 0 || remaining[0] == DeepDrillProvenanceTrace {
+		t.Fatalf("expected other provenance strategies to remain, got %#v", remaining)
 	}
 }
 

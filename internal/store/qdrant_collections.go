@@ -36,6 +36,12 @@ type QdrantScrollRequest struct {
 	Filter     map[string]any
 }
 
+type QdrantPayloadVectorPoint struct {
+	ID      string
+	Vector  []float32
+	Payload map[string]any
+}
+
 func (c *QdrantClient) ListCollections(ctx context.Context) ([]string, error) {
 	if c == nil || strings.TrimSpace(c.baseURL) == "" {
 		return nil, fmt.Errorf("qdrant client is not configured")
@@ -189,4 +195,67 @@ func (c *QdrantClient) ScrollCollection(ctx context.Context, req QdrantScrollReq
 		payloads = append(payloads, point.Payload)
 	}
 	return payloads, response.Result.NextPageOffset, nil
+}
+
+func (c *QdrantClient) EnsureCollection(ctx context.Context, collection, vectorName, distance string, dims int) error {
+	trimmedCollection := strings.TrimSpace(collection)
+	if trimmedCollection == "" {
+		return fmt.Errorf("collection is required")
+	}
+	if dims <= 0 {
+		return fmt.Errorf("embedding dimensions must be greater than zero")
+	}
+	dist := strings.TrimSpace(distance)
+	if dist == "" {
+		dist = "Cosine"
+	}
+	descriptor, err := c.DescribeCollection(ctx, trimmedCollection, vectorName)
+	if err != nil {
+		return err
+	}
+	if descriptor.Exists {
+		if descriptor.VectorSize > 0 && descriptor.VectorSize != dims {
+			return &DimensionMismatchError{CollectionSize: descriptor.VectorSize, EmbeddingSize: dims}
+		}
+		return nil
+	}
+	createBody := map[string]any{}
+	if strings.TrimSpace(vectorName) == "" {
+		createBody["vectors"] = map[string]any{"size": dims, "distance": dist}
+	} else {
+		createBody["vectors"] = map[string]any{strings.TrimSpace(vectorName): map[string]any{"size": dims, "distance": dist}}
+	}
+	_, err = c.doJSON(ctx, http.MethodPut, fmt.Sprintf("/collections/%s", trimmedCollection), createBody, nil)
+	return err
+}
+
+func (c *QdrantClient) UpsertPayloadVectors(ctx context.Context, collection, vectorName string, points []QdrantPayloadVectorPoint) error {
+	trimmedCollection := strings.TrimSpace(collection)
+	if trimmedCollection == "" {
+		return fmt.Errorf("collection is required")
+	}
+	if len(points) == 0 {
+		return nil
+	}
+	batch := make([]qdrantPoint, 0, len(points))
+	trimmedVectorName := strings.TrimSpace(vectorName)
+	for _, point := range points {
+		if strings.TrimSpace(point.ID) == "" {
+			return fmt.Errorf("point id is required")
+		}
+		if len(point.Vector) == 0 {
+			return fmt.Errorf("point vector is required")
+		}
+		vector := any(point.Vector)
+		if trimmedVectorName != "" {
+			vector = map[string][]float32{trimmedVectorName: point.Vector}
+		}
+		payload := point.Payload
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		batch = append(batch, qdrantPoint{ID: qdrantPointID(point.ID), Vector: vector, Payload: payload})
+	}
+	_, err := c.doJSONWithTransientRetry(ctx, http.MethodPut, fmt.Sprintf("/collections/%s/points?wait=true", trimmedCollection), map[string]any{"points": batch}, nil)
+	return err
 }

@@ -65,3 +65,30 @@ func TestMindDrillMemoryCollectionConfig(t *testing.T) {
 		t.Fatalf("expected write mode summary, got %q", cfg.MindDrillMemory.WriteMode)
 	}
 }
+
+func TestDeepDrillConfigDefaults(t *testing.T) {
+	t.Setenv("EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected config to load, got error: %v", err)
+	}
+	if cfg.DeepDrill.ThoughtCollection != "minddrill_research_thoughts" {
+		t.Fatalf("expected default thought collection, got %q", cfg.DeepDrill.ThoughtCollection)
+	}
+	if cfg.DeepDrill.FreezeLowGainAfter != 2 {
+		t.Fatalf("expected freeze threshold 2, got %d", cfg.DeepDrill.FreezeLowGainAfter)
+	}
+}
+
+func TestDeepDrillFreezeThresholdMustBePositive(t *testing.T) {
+	t.Setenv("EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("DEEPDRILL_FREEZE_LOW_GAIN_AFTER", "0")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected DEEPDRILL_FREEZE_LOW_GAIN_AFTER validation error")
+	}
+}

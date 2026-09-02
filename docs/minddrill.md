@@ -82,6 +82,45 @@ The report distinguishes explicit and inferred edges and prints:
 DeepDrill strategy scheduling now auto-considers `PROVENANCE_TRACE` when uncertainty is
 `PROVENANCE_GAP`, `CHRONOLOGY_GAP`, or `SOURCE_QUALITY`.
 
+## DeepDrill research loop
+
+DeepDrill runs a bounded, source-backed research loop over a bound collection. Each iteration
+plans one `uncertainty` class and one `strategy`, executes it against the corpus, and updates
+competing hypothesis state. Semantic similarity is treated as a lead, never as evidence.
+
+### Uncertainty reclassification before freeze
+
+When a strategy returns duplicate or low-gain evidence, DeepDrill no longer freezes immediately.
+It first inspects the unresolved claim's provenance, chronology, contradictions, and retrieval
+coverage, and reclassifies the uncertainty class when a more appropriate one exists. A failed
+strategy means that strategy is exhausted, not that the research question is exhausted.
+
+The decision stage persists a `RECLASSIFY_UNCERTAINTY` thought (plus a `MODEL_REVISION`)
+recording `previous_uncertainty`, `reclassified_uncertainty`, `reclassification_reason`,
+`strategies_remaining`, and `strategies_exhausted`.
+
+### Strategy exhaustion enforcement
+
+Exhausted strategies are scoped by uncertainty plus the current hypothesis model and evidence
+tier, so a strategy is not re-selected while unused materially distinct strategies remain.
+For `PROVENANCE_GAP`, the expected progression is roughly:
+
+```text
+PROVENANCE_TRACE
+    ↓ exhausted
+PROVENANCE_PROFILE
+    ↓
+RAW_SOURCE_LOOKUP
+    ↓
+PROVENANCE_DOWNWEIGHT
+    ↓
+reclassify or freeze
+```
+
+A meaningful model change or a newly discovered, higher provenance tier reopens a previously
+exhausted strategy. A repeating `uncertainty/strategy/evidence-fingerprint` cycle is treated as
+scheduler-level diminishing returns and freezes the branch instead of looping.
+
 ## Roadmap
 
 The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). Current focus is stable, trustable retrieval UX: stale-response guards, explicit per-mode rendering, duplicate grouping controls, richer context-pack output, and browse-first filtering.

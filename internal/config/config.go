@@ -17,6 +17,7 @@ type Config struct {
 	Chat            ChatConfig
 	Vision          VisionConfig
 	MindDrillMemory MindDrillMemoryConfig
+	DeepDrill       DeepDrillConfig
 	Chunking        ChunkingConfig
 	Ingestion       IngestionConfig
 	Search          SearchConfig
@@ -91,6 +92,11 @@ type MindDrillMemoryConfig struct {
 	WriteMode           string
 	TopK                int
 	SessionSummaryEvery int
+}
+
+type DeepDrillConfig struct {
+	ThoughtCollection  string
+	FreezeLowGainAfter int
 }
 
 type ChunkingConfig struct {
@@ -203,6 +209,10 @@ func Load() (Config, error) {
 			TopK:                getEnvInt("MINDDRILL_MEMORY_TOP_K", 6),
 			SessionSummaryEvery: getEnvInt("MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY", 8),
 		},
+		DeepDrill: DeepDrillConfig{
+			ThoughtCollection:  getEnv("MINDDRILL_RESEARCH_THOUGHT_COLLECTION", "minddrill_research_thoughts"),
+			FreezeLowGainAfter: getEnvInt("DEEPDRILL_FREEZE_LOW_GAIN_AFTER", 2),
+		},
 		Chunking: ChunkingConfig{
 			Size:    getEnvInt("CHUNK_SIZE", 900),
 			Overlap: getEnvInt("CHUNK_OVERLAP", 150),
@@ -306,6 +316,12 @@ func (c Config) Validate() error {
 	}
 	if c.MindDrillMemory.SessionSummaryEvery <= 0 {
 		return errors.New("MINDDRILL_MEMORY_SESSION_SUMMARY_EVERY must be greater than 0")
+	}
+	if strings.TrimSpace(c.DeepDrill.ThoughtCollection) == "" {
+		return errors.New("MINDDRILL_RESEARCH_THOUGHT_COLLECTION is required")
+	}
+	if c.DeepDrill.FreezeLowGainAfter < 1 {
+		return errors.New("DEEPDRILL_FREEZE_LOW_GAIN_AFTER must be greater than 0")
 	}
 
 	switch c.Chat.Provider {
