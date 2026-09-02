@@ -22,6 +22,8 @@ As the standalone binary built by `./make_all.sh` (binaries are written to `bin/
 ./bin/minddrill                        # serves on http://localhost:8089
 ./bin/minddrill --port 9000            # custom port
 ./bin/minddrill --api http://localhost:8088  # point at a non-default API base URL
+./bin/minddrill inspect frontpocket_memory
+./bin/minddrill inspect --sample-limit 4000 centerstone
 ```
 
 Then open the printed URL (default <http://localhost:8089>) in your browser.
@@ -36,6 +38,12 @@ Then open the printed URL (default <http://localhost:8089>) in your browser.
 | -------- | ------------------------ | ------------------------------------ |
 | `--port` | `8089`                   | Port to serve the MindDrill UI on.   |
 | `--api`  | `http://localhost:8088`  | FrontPocket API base URL to call.    |
+
+`minddrill inspect` options:
+
+| Flag             | Default | Description                                       |
+| ---------------- | ------- | ------------------------------------------------- |
+| `--sample-limit` | `1200`  | Max vectors to sample while profiling collection. |
 
 It also exposes:
 
@@ -59,7 +67,7 @@ The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). 
 
 ## What it uses
 
-MindDrill is a thin client over the FrontPocket API:
+MindDrill is a thin client over the FrontPocket API for UI use, and now includes a corpus inspection CLI plus research retrieval tools for the chat model.
 
 - `GET /health` — connection status
 - `GET /memory/stats` — memory counts
@@ -67,6 +75,29 @@ MindDrill is a thin client over the FrontPocket API:
 - `POST /memory/context-pack` — assemble session context
 - `POST /memory/chat` — chat response with split memory context and optional `system_prompt` persona guidance
 - `DELETE /memory/chat/session` — clear the current MindDrill chat session and its chat memory
+
+Research retrieval tools exposed to the model include:
+
+- `inspect_collection`
+- `bind_research_collection`
+- `semantic_search`
+- `keyword_search`
+- `search_with_metadata`
+- `get_document_chunks`
+- `get_neighbor_chunks`
+- `find_related_outside_document`
+- `search_excluding_documents`
+
+## Corpus research workflow
+
+MindDrill research sessions now bind explicitly to one collection before retrieval. There is no silent fallback to an arbitrary collection.
+
+- Start with `minddrill inspect --list` and `minddrill inspect <collection>` to confirm collection shape and embedding compatibility.
+- Bind a research session with `bind_research_collection` before calling retrieval tools.
+- Retrieval calls can cap per-document dominance with `max_chunks_per_document` and can run raw nearest-neighbor mode when explicitly requested.
+- Every research search can append a ledger entry (query, mode, filters, exclusions, timestamp, result sources, reason).
+- Session state persists to `data/minddrill_research_sessions.json` by default, configurable via `MINDDRILL_RESEARCH_SESSION_FILE`.
+- Similarity scores remain retrieval metadata only, not proof of causality or agreement.
 
 ## Quick probes
 

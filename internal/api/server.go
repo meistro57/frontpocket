@@ -118,6 +118,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	toolRegistry := loadout.NewRegistry()
+	researchRuntime := tools.NewMindDrillResearchRuntime(qdrant, embedder, cfg.Qdrant.VectorName, logger)
 	toolRegistry.Register(tools.NewMemorySearchTool(
 		"search_source_memory",
 		"Search FrontPocket's source-backed memory archive (imported chats and documents) for a specific topic, project, or theme. The context you were already given is a first-pass similarity sample — use this to dig further with a sharper, self-chosen query.",
@@ -131,6 +132,9 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 			mindDrillStore,
 			8, 20,
 		))
+	}
+	for _, tool := range tools.NewMindDrillResearchTools(researchRuntime) {
+		toolRegistry.Register(tool)
 	}
 	toolRegistry.Register(loadout.NewTavilyWebSearchTool(cfg.Tools.TavilyAPIKey))
 

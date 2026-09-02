@@ -117,6 +117,61 @@ func TestMindDrillUIUsesNonDebugSessionDeleteRoute(t *testing.T) {
 	}
 }
 
+func TestMindDrillInspectCommandRequiresCollection(t *testing.T) {
+	err := run([]string{"inspect"})
+	if err == nil || !strings.Contains(err.Error(), "exactly one collection") {
+		t.Fatalf("expected inspect argument validation error, got %v", err)
+	}
+}
+
+func TestMindDrillInspectListCommand(t *testing.T) {
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/collections" {
+			_, _ = io.WriteString(w, `{"result":{"collections":[{"name":"alpha"},{"name":"beta"}]}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer qdrant.Close()
+
+	t.Setenv("QDRANT_URL", qdrant.URL)
+	if err := run([]string{"inspect", "--list"}); err != nil {
+		t.Fatalf("inspect --list failed: %v", err)
+	}
+}
+
+func TestMindDrillInspectCommand(t *testing.T) {
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"embeddings":[[0.1,0.2,0.3,0.4]]}`)
+	}))
+	defer embeddingServer.Close()
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/research_collection":
+			_, _ = io.WriteString(w, `{"result":{"points_count":2,"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/research_collection/points/scroll":
+			_, _ = io.WriteString(w, `{"result":{"points":[{"payload":{"memory_id":"m1","source_document_id":"doc-a","source_title":"Doc A","chunk_id":"c1","chunk_index":1,"text":"alpha","embedding_model":"text-embedding-004"}}],"next_page_offset":null}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qdrant.Close()
+
+	t.Setenv("EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_BASE_URL", embeddingServer.URL)
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("QDRANT_URL", qdrant.URL)
+
+	if err := run([]string{"inspect", "--sample-limit", "50", "research_collection"}); err != nil {
+		t.Fatalf("inspect command failed: %v", err)
+	}
+}
+
 func TestMindDrillUIRendersAssistantMarkdown(t *testing.T) {
 	testServer := httptest.NewServer(newHandler("http://localhost:8088"))
 	defer testServer.Close()
