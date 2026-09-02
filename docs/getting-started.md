@@ -211,7 +211,7 @@ If OpenRouter calls succeed but Qdrant remains empty, rebuild and rerun ingest t
 As always: rebuild with `./make_all.sh` before testing ingest changes — running
 against a stale `bin/frontpocket` binary looks identical to a real bug.
 
-## 12) Explore memory in the browser (MindDrill)
+## 13) Explore memory in the browser (MindDrill)
 
 With the API running, launch the MindDrill memory explorer:
 
@@ -234,7 +234,23 @@ Current MindDrill behavior highlights:
   fenced code blocks with per-block copy actions.
 - Corpus stats for projects and memory kinds are clickable shortcuts into browse filters.
 
-## 13) Expose MCP tools for external agents
+## 14) Trace DeepDrill provenance
+
+```bash
+# from a thought artifact
+./bin/minddrill deepdrill provenance <thought_id> --collection frontpocket_memory
+
+# from a source id
+./bin/minddrill deepdrill provenance --collection frontpocket_memory --source <source_id>
+
+# structured output
+./bin/minddrill deepdrill provenance <thought_id> --collection frontpocket_memory --json
+```
+
+The text output includes `SOURCE`, `TYPE`, `UPSTREAM`, `DOWNSTREAM`, `RELATED`,
+`CHRONOLOGY`, `WEAKNESSES`, and `CONFIDENCE`.
+
+## 15) Expose MCP tools for external agents
 
 Run the MCP stdio bridge from the same machine as FrontPocket:
 
@@ -250,19 +266,19 @@ frontpocket mcp --api http://localhost:8088 \
 This exposes `frontpocket_health`, `frontpocket_search`, and
 `frontpocket_context_pack` to any MCP-compatible agent runtime.
 
-## 14) Run memory loop (dry-run)
+## 16) Run memory loop (dry-run)
 
 ```bash
 frontpocket memory-loop --batch-size 200 --dry-run
 ```
 
-## 15) Write proposed canon candidates
+## 17) Write proposed canon candidates
 
 ```bash
 frontpocket memory-loop --batch-size 200 --write-candidates
 ```
 
-## 16) Review queue from CLI
+## 18) Review queue from CLI
 
 ```bash
 frontpocket memory-loop list
@@ -271,7 +287,7 @@ frontpocket memory-loop reject --id cand_xxx --reason "insufficient evidence" --
 frontpocket memory-loop merge --id cand_xxx --target canon_abc --reviewed-by mark
 ```
 
-## 17) Review queue from API
+## 19) Review queue from API
 
 ```bash
 curl http://localhost:8088/memory/canon/proposed
@@ -280,7 +296,7 @@ curl -X POST http://localhost:8088/memory/canon/proposed/cand_xxx/approve \
   -d '{"reviewed_by":"mark"}'
 ```
 
-## 18) Run speaker-aware cleanup + reflection
+## 20) Run speaker-aware cleanup + reflection
 
 ```bash
 # cleanup/normalize raw memory into fp_cleaned_memory
@@ -301,7 +317,7 @@ Speaker-aware behavior in this pipeline:
 - Assistant technical chunks are classified `domain=technical` with `phase_applicability=not_applicable`.
 - Project hints can be inferred from `source_title` when project is empty; final project assignment remains manual/approved.
 
-## 19) Run tests
+## 21) Run tests
 
 > `./make_all.sh` builds both binaries into `bin/`. Always launch `./bin/frontpocket` and
 > `./bin/minddrill` from there — not a binary of the same name sitting in the repo root from

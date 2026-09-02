@@ -2,6 +2,14 @@
 
 MindDrill is FrontPocket's local memory explorer and chat surface. Its job is to make retrieval visible, source-backed, and user-controlled rather than spooky. This roadmap keeps the UI boring to run, honest about provenance, and safe for local-first use.
 
+## Current delivery — DeepDrill provenance tracing
+
+Delivered in this branch:
+
+- Added `minddrill deepdrill provenance <thought_id>` with optional `--source <source_id>`, `--session`, `--collection`, `--limit`, and `--json`.
+- Added provenance report sections for source type, upstream/downstream/related edges, chronology signals, weaknesses, and confidence.
+- Added scheduler routing so `PROVENANCE_GAP`, `CHRONOLOGY_GAP`, and `SOURCE_QUALITY` can auto-select `PROVENANCE_TRACE`.
+
 ## Sprint 1 — Trust and Control
 
 Status: completed in this branch.

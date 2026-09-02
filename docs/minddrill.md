@@ -53,6 +53,35 @@ It also exposes:
 The embedded page loads `/config.json` on startup and uses that runtime value for all
 FrontPocket API calls, replacing the old hardcoded API constant.
 
+## DeepDrill provenance tracing
+
+MindDrill includes DeepDrill CLI subcommands for bounded research loops and source provenance tracing.
+
+```bash
+# Trace from a thought artifact
+./bin/minddrill deepdrill provenance <thought_id> --collection frontpocket_memory
+
+# Trace directly from a source id
+./bin/minddrill deepdrill provenance --collection frontpocket_memory --source <source_id>
+
+# Resolve collection from a bound session
+./bin/minddrill deepdrill provenance <thought_id> --session centerstone
+
+# Machine-readable output
+./bin/minddrill deepdrill provenance <thought_id> --collection frontpocket_memory --json
+```
+
+The report distinguishes explicit and inferred edges and prints:
+
+- `SOURCE` and `TYPE` for the anchor
+- `UPSTREAM`, `DOWNSTREAM`, and `RELATED` provenance edges
+- `CHRONOLOGY` signals (source-local chronology only)
+- `WEAKNESSES` when metadata is incomplete or chronology is unsafe
+- `CONFIDENCE` for the assembled trace
+
+DeepDrill strategy scheduling now auto-considers `PROVENANCE_TRACE` when uncertainty is
+`PROVENANCE_GAP`, `CHRONOLOGY_GAP`, or `SOURCE_QUALITY`.
+
 ## Roadmap
 
 The active enhancement plan lives in [MindDrill Roadmap](minddrill-roadmap.md). Current focus is stable, trustable retrieval UX: stale-response guards, explicit per-mode rendering, duplicate grouping controls, richer context-pack output, and browse-first filtering.

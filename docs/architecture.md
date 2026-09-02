@@ -45,6 +45,7 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - External agent runtimes can connect through `frontpocket mcp`, a stdio MCP bridge that exposes health/search/context-pack tools and still routes all calls through the API boundary.
 - MindDrill serves `GET /config.json` from its own origin to publish the configured FrontPocket API base URL (`--api`) at runtime, so the UI has no hardcoded backend URL.
 - MindDrill chat calls `POST /memory/chat`, which retrieves both memory layers and writes back through the Go API only.
+- DeepDrill provenance tracing can build explicit/inferred source edges (`DERIVED_FROM`, `CITES`, `SAME_SOURCE_FAMILY`, chronology edges) from corpus metadata while explicitly avoiding ingestion-order chronology claims.
 - The memory loop proposes canon candidates but never auto-promotes them; human review is required via CLI or API approve/reject/merge actions.
 - The pre-reflection cleanup loop is mechanical (normalization/validation only), writes to `fp_cleaned_memory`, and does not mutate raw `frontpocket_memory` points.
 - Cleanup normalizes speaker/source role to `user | assistant | system | tool | mixed | unknown` and stamps role-aware `memory_kind` plus usability scopes.

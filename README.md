@@ -282,6 +282,22 @@ minddrill --api http://localhost:8088  # non-default API base URL
 Then open <http://localhost:8089> in your browser. Make sure FrontPocket is running and
 that `http://localhost:8089` is in `CORS_ALLOW_ORIGINS`.
 
+**DeepDrill provenance tracing (CLI):**
+
+```bash
+# Trace provenance from a stored DeepDrill thought
+minddrill deepdrill provenance <thought_id> --collection frontpocket_memory
+
+# Trace provenance directly from a source id
+minddrill deepdrill provenance --collection frontpocket_memory --source <source_id>
+
+# JSON output for automation
+minddrill deepdrill provenance <thought_id> --collection frontpocket_memory --json
+```
+
+The human-readable report is provenance-aware and includes: `SOURCE`, `TYPE`, `UPSTREAM`,
+`DOWNSTREAM`, `RELATED`, `CHRONOLOGY`, `WEAKNESSES`, and `CONFIDENCE`.
+
 ---
 
 ## MCP server for external agents
