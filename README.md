@@ -306,6 +306,36 @@ Exposed MCP tools:
 
 ---
 
+## Folder & document ingest (CLI)
+
+FrontPocket can auto-detect and ingest mixed media and documents directly from a directory (`incoming/` by default or any specified folder):
+
+* **Word Documents (`.docx`)**: structured text, section headings, and paragraph chunking.
+* **Presentation Decks (`.pdf`)**: detects slide decks (e.g. NotebookLM presentations), renders slide pages, and transcribes text, formulas, and diagrams using `VISION_MODEL`. Embedded text PDFs are parsed directly.
+* **Diagrams and Images (`.png`, `.jpg`, `.jpeg`, `.webp`)**: transcribes visual labels, node connections, flow, and concepts using `VISION_MODEL`.
+* **Audio & Video (`.m4a`, `.mp3`, `.wav`, `.mp4`)**: GPU-accelerated speech-to-text transcription via Whisper/WhisperX with timestamped segment turns.
+* **Text / Notes (`.md`, `.txt`, `.jsonl`)**: natural text and JSONL records.
+
+```bash
+# dry run scan of incoming/ or any folder
+frontpocket ingest folder incoming --dry-run
+
+# full ingest with a project label
+frontpocket ingest folder incoming --project UTMGR
+
+# skip audio or vision if doing documents first
+frontpocket ingest folder incoming --project UTMGR --no-audio
+frontpocket ingest folder incoming --project UTMGR --no-vision
+
+# resumable with persistent cache
+frontpocket ingest folder incoming --project UTMGR --resume .frontpocket_cache/resume_journal.json
+
+# write normalized records to JSONL on disk
+frontpocket ingest folder incoming --project UTMGR --out data/incoming_records.jsonl
+```
+
+---
+
 ## ChatGPT export ingest (CLI)
 
 FrontPocket can parse ChatGPT exports from either a `.zip` file or an extracted folder and

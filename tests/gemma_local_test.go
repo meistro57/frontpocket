@@ -153,6 +153,10 @@ func TestGemma4MultiTurnToolLoopDirect(t *testing.T) {
 		t.Fatalf("config.Load failed: %v", err)
 	}
 
+	if cfg.Chat.Provider != "ollama" || cfg.Embedding.Provider != "ollama" || cfg.Chat.OllamaModel != "gemma4:12b" {
+		t.Skipf("Skipping local test, chat provider is %s / %s, embed provider is %s", cfg.Chat.Provider, cfg.Chat.OllamaModel, cfg.Embedding.Provider)
+	}
+
 	client := chat.NewOllamaChatClient(cfg.Embedding.OllamaBaseURL, cfg.Chat.OllamaModel)
 
 	messages := []chat.Message{

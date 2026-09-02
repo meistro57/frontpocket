@@ -35,6 +35,7 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - Search responses can be cached in Redis (`SEARCH_CACHE_TTL_SECONDS`).
 - Session state can be cached in Redis via `POST /memory/session` and removed with `DELETE /memory/session`.
 - ChatGPT imports resolve attachment references against the export's own mapping files (`conversation_asset_file_names.json`, `library_files.json`); images are captioned via a vision-capable model (`VISION_MODEL`) and non-image attachments get a metadata-only description, before falling back to a placeholder stub for genuinely unresolvable references. See `docs/memory-model.md` and `docs/providers.md`.
+- Folder ingest (`frontpocket ingest folder <path>`) auto-detects and ingests mixed media directories: Word documents (`.docx`), visual presentation decks (`.pdf`), diagrams (`.png`), and audio/video (`.m4a`, `.mp4`) with GPU Whisper speech-to-text and vision model extraction, using `.frontpocket_cache` for persistent caching.
 - Qdrant collection dimensions are validated against embedding output.
 - FrontPocket corpus memory and MindDrill chat memory use separate Qdrant collections on the same Qdrant instance (`QDRANT_COLLECTION` and `MINDDRILL_MEMORY_COLLECTION`).
 - The API applies CORS as the outermost middleware (configured via `CORS_ALLOW_ORIGINS`), so browser clients can call it directly and `OPTIONS` preflight is handled before auth.

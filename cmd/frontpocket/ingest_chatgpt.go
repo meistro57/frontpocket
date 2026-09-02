@@ -31,8 +31,14 @@ func runIngestCommand(args []string) error {
 		return runIngestChatGPT(args[1:])
 	case "claude":
 		return runIngestClaude(args[1:])
+	case "folder", "directory":
+		return runIngestFolder(args[1:])
 	default:
-		return fmt.Errorf("unsupported ingest source %q", args[0])
+		// If args[0] is an existing directory or "incoming", route to runIngestFolder
+		if fi, err := os.Stat(args[0]); err == nil && fi.IsDir() {
+			return runIngestFolder(args)
+		}
+		return fmt.Errorf("unsupported ingest source %q (expected chatgpt, claude, or folder)", args[0])
 	}
 }
 
@@ -268,11 +274,13 @@ func printIngestHelp(output *os.File) {
 	fmt.Fprintln(output, "  frontpocket ingest <subcommand> [options]")
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Subcommands:")
+	fmt.Fprintln(output, "  folder       Import mixed media and documents from a directory (default: incoming/).")
 	fmt.Fprintln(output, "  chatgpt      Import from a ChatGPT export zip or folder.")
 	fmt.Fprintln(output, "  claude       Import from a Claude export folder.")
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Help:")
 	fmt.Fprintln(output, "  frontpocket ingest --help")
+	fmt.Fprintln(output, "  frontpocket ingest folder --help")
 	fmt.Fprintln(output, "  frontpocket ingest chatgpt --help")
 	fmt.Fprintln(output, "  frontpocket ingest claude --help")
 }

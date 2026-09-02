@@ -155,24 +155,49 @@ func NewCachingCaptioner(next Captioner, cache *CaptionCache) *CachingCaptioner 
 }
 
 func (c *CachingCaptioner) CaptionImage(ctx context.Context, attachment ResolvedAttachment) (string, error) {
+	return c.CaptionImageWithPrompt(ctx, attachment, DefaultVisionPrompt)
+}
+
+func (c *CachingCaptioner) CaptionImageWithPrompt(ctx context.Context, attachment ResolvedAttachment, prompt string) (string, error) {
 	if c == nil || c.next == nil {
 		return "", fmt.Errorf("captioner is required")
 	}
+	p := strings.TrimSpace(prompt)
+	if p == "" {
+		p = DefaultVisionPrompt
+	}
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(attachment.MimeType)), "image/") {
+		if pc, ok := c.next.(PromptCaptioner); ok {
+			return pc.CaptionImageWithPrompt(ctx, attachment, p)
+		}
 		return c.next.CaptionImage(ctx, attachment)
 	}
 	imageBytes, err := os.ReadFile(attachment.DiskPath)
 	if err != nil {
 		return "", fmt.Errorf("read attachment bytes: %w", err)
 	}
-	sum := sha256.Sum256(imageBytes)
-	hash := hex.EncodeToString(sum[:])
+
+	var hash string
+	if p == DefaultVisionPrompt {
+		sum := sha256.Sum256(imageBytes)
+		hash = hex.EncodeToString(sum[:])
+	} else {
+		sum := sha256.Sum256(append(imageBytes, []byte("\n--prompt--\n"+p)...))
+		hash = hex.EncodeToString(sum[:])
+	}
+
 	if cached, ok := c.cache.Get(hash); ok {
 		c.recordHit()
 		return cached, nil
 	}
 	c.recordMiss()
-	caption, err := c.next.CaptionImage(ctx, attachment)
+
+	var caption string
+	if pc, ok := c.next.(PromptCaptioner); ok {
+		caption, err = pc.CaptionImageWithPrompt(ctx, attachment, p)
+	} else {
+		caption, err = c.next.CaptionImage(ctx, attachment)
+	}
 	if err != nil {
 		return "", err
 	}

@@ -125,7 +125,38 @@ The optional `system_prompt` field is for persona or tone guidance on the chat t
 The response includes `answer`, `used_frontpocket_memories`, `used_minddrill_memories`,
 `context_pack`, `model`, and `provider`.
 
-## 11) Ingest a ChatGPT export (zip or folder)
+## 11) Ingest mixed documents & media from a folder (DOCX, PDF slides, diagrams, audio)
+
+FrontPocket can scan and ingest any folder containing mixed documents, presentation slides, diagrams, and audio files (e.g. `./incoming`):
+
+```bash
+# Preview what would be processed without storing
+frontpocket ingest folder incoming --dry-run
+
+# Ingest all documents and media with a project tag
+frontpocket ingest folder incoming --project UTMGR
+
+# Ingest documents, slides, and diagrams first (skip audio)
+frontpocket ingest folder incoming --project UTMGR --no-audio
+
+# Ingest without vision model calls (skip slide/diagram vision extraction)
+frontpocket ingest folder incoming --project UTMGR --no-vision
+
+# Write normalized records to a JSONL file
+frontpocket ingest folder incoming --project UTMGR --out data/processed/incoming_records.jsonl
+
+# Interruption-safe run using a persistent progress journal
+frontpocket ingest folder incoming --project UTMGR --resume .frontpocket_cache/resume_journal.json
+```
+
+Extraction details:
+- **Word Documents (`.docx`)**: Native Go OpenXML parser extracts document structure, section headings, and body paragraphs.
+- **Presentations & Slides (`.pdf`)**: Extracts embedded text if present. For visual slides (such as NotebookLM slide presentations), slide pages are rendered at native resolution and transcribed/described using `VISION_MODEL`.
+- **Diagrams & Images (`.png`, `.jpg`, `.jpeg`, `.webp`)**: Transcribes labels, formulas, node connections, flow, and concepts using `VISION_MODEL`.
+- **Audio & Video (`.m4a`, `.mp3`, `.wav`, `.mp4`)**: GPU-accelerated speech-to-text using WhisperX/Whisper with time-coded segment chunks (`[MM:SS - MM:SS]`).
+- **Persistent Caching**: Vision captions and audio transcripts are saved in `.frontpocket_cache/` so rerunning or interrupted imports never repeat expensive vision or audio processing.
+
+## 12) Ingest a ChatGPT export (zip or folder)
 
 ```bash
 frontpocket ingest chatgpt ./chatgpt-export.zip --dry-run

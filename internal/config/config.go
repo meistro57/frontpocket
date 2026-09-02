@@ -240,8 +240,8 @@ func Load() (Config, error) {
 		},
 		Tools: ToolsConfig{
 			TavilyAPIKey:         getEnv("TAVILY_API_KEY", ""),
-			KaeMCPPath:           getEnv("KAE_MCP_PATH", "/home/mark/kae/mcp/kae-mcp"),
-			FrontpocketMCPPath:   getEnv("FRONTPOCKET_MCP_PATH", "/home/mark/mcp-servers/frontpocket_mcp.py"),
+			KaeMCPPath:           getEnv("KAE_MCP_PATH", ""),
+			FrontpocketMCPPath:   getEnv("FRONTPOCKET_MCP_PATH", ""),
 			FrontpocketMCPPython: getEnv("FRONTPOCKET_MCP_PYTHON", "python3"),
 		},
 	}

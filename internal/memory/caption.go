@@ -53,11 +53,24 @@ func NewVisionCaptioner(baseURL, apiKey, model, siteURL, appName string) *Vision
 	}
 }
 
+// PromptCaptioner extends Captioner to allow a custom vision prompt.
+type PromptCaptioner interface {
+	Captioner
+	CaptionImageWithPrompt(ctx context.Context, attachment ResolvedAttachment, prompt string) (string, error)
+}
+
+const DefaultVisionPrompt = "Describe this image in 1-3 sentences, focused on any concrete, searchable details (text visible in the image, subject matter, diagrams, screenshots, code, UI, etc). Be concrete and specific, not poetic."
+
 // CaptionImage returns a text description suitable for embedding. Non-image
 // mime types return a plain metadata-only description ("PDF attachment:
 // filename.pdf") without making an API call. Image mime types are sent to
 // VISION_MODEL via OpenRouter's chat completions endpoint.
 func (c *VisionCaptioner) CaptionImage(ctx context.Context, attachment ResolvedAttachment) (string, error) {
+	return c.CaptionImageWithPrompt(ctx, attachment, DefaultVisionPrompt)
+}
+
+// CaptionImageWithPrompt sends the image to VISION_MODEL with a custom prompt.
+func (c *VisionCaptioner) CaptionImageWithPrompt(ctx context.Context, attachment ResolvedAttachment, prompt string) (string, error) {
 	if !strings.HasPrefix(strings.ToLower(attachment.MimeType), "image/") {
 		return nonImageDescription(attachment), nil
 	}
@@ -73,13 +86,18 @@ func (c *VisionCaptioner) CaptionImage(ctx context.Context, attachment ResolvedA
 
 	dataURL := fmt.Sprintf("data:%s;base64,%s", attachment.MimeType, base64.StdEncoding.EncodeToString(imageBytes))
 
+	p := strings.TrimSpace(prompt)
+	if p == "" {
+		p = DefaultVisionPrompt
+	}
+
 	payload := map[string]any{
 		"model": c.Model,
 		"messages": []map[string]any{
 			{
 				"role": "user",
 				"content": []map[string]any{
-					{"type": "text", "text": "Describe this image in 1-3 sentences, focused on any concrete, searchable details (text visible in the image, subject matter, diagrams, screenshots, code, UI, etc). Be concrete and specific, not poetic."},
+					{"type": "text", "text": p},
 					{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
 				},
 			},

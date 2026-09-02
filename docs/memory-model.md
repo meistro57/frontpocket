@@ -75,6 +75,16 @@ Resolution behavior:
   deduplicated by their scheme-stripped form before resolution so this
   doesn't double-count attachments or double-spend on vision calls.
 
+## Folder and multimodal ingestion behavior
+
+`frontpocket ingest folder <path>` normalizes mixed documents, presentations, diagrams, and media directly into `frontpocket_memory`:
+
+- **Word Documents (`.docx`)**: Parsed natively from OpenXML packages. Each document heading and section becomes a structured record with `source_type=document`, `speaker=document`, and `memory_kind=research_note`.
+- **Presentation Decks (`.pdf`)**: Detects slide presentations (such as NotebookLM slide exports). For decks without embedded text streams, pages are rendered at native resolution and transcribed/described using `VISION_MODEL` with slide-focused prompting. Stored with `source_type=presentation`, `speaker=presentation`, and tags including `slide-N`.
+- **Diagrams and Images (`.png`, `.jpg`, `.jpeg`, `.webp`)**: Transcribed with diagram-focused vision prompting capturing node connections, formulas, labels, and conceptual relationships. Stored with `source_type=diagram`, `speaker=diagram`, and `memory_kind=creative_artifact`.
+- **Audio & Video (`.m4a`, `.mp3`, `.wav`, `.mp4`)**: Transcribed via GPU-accelerated WhisperX/Whisper, segmented into natural turns with timestamp ranges (`[01:15 - 02:45]`), stored with `source_type=audio_overview` or `video_presentation`, `speaker=audio_overview`, and `memory_kind=research_note`.
+- **Persistent Caching**: Slide image extractions, diagram vision captions, and audio transcripts are saved in `.frontpocket_cache/` so interrupted runs or repeated imports never incur redundant API spend or transcription time.
+
 ## Retrieval behavior
 
 - `status=rejected`, `status=contradicted`, and `status=outdated` are excluded by default unless `include_rejected=true` is requested.
