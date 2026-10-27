@@ -534,6 +534,7 @@ func ToMessageRecords(records []NormalizedMemoryRecord) []MessageRecord {
 		}
 		out = append(out, MessageRecord{
 			ConversationID:         record.ConversationID,
+			MessageID:              record.MessageID,
 			Timestamp:              timestamp,
 			Speaker:                record.Speaker,
 			Text:                   record.Text,

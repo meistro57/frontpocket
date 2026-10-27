@@ -70,18 +70,18 @@ func TestIngestFlushesInBatches(t *testing.T) {
 	store := &countingStore{InMemoryStore: NewInMemoryStore()}
 	ing := newIngestor(store)
 
-	points, err := ing.Ingest(context.Background(), makeRecords(25))
+	result, err := ing.Ingest(context.Background(), makeRecords(25))
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	if len(points) != 25 {
-		t.Fatalf("expected 25 inserted points, got %d", len(points))
+	if len(result.Points) != 25 {
+		t.Fatalf("expected 25 inserted points, got %d", len(result.Points))
 	}
 	if store.batches < 3 {
 		t.Fatalf("expected multiple batches for 25 records with batch size 10, got %d", store.batches)
 	}
 	// Returned points must not retain vectors (freed after flush).
-	for _, p := range points {
+	for _, p := range result.Points {
 		if p.Vector != nil {
 			t.Fatalf("expected vectors to be cleared on returned points")
 		}
@@ -99,14 +99,14 @@ func TestIngestCarriesConversationSignals(t *testing.T) {
 	records[0].FeedbackNote = "totally lost personality"
 	records[0].FeedbackAt = "2025-01-01T00:00:00Z"
 
-	points, err := ing.Ingest(context.Background(), records)
+	result, err := ing.Ingest(context.Background(), records)
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	if len(points) != 1 {
-		t.Fatalf("expected 1 inserted point, got %d", len(points))
+	if len(result.Points) != 1 {
+		t.Fatalf("expected 1 inserted point, got %d", len(result.Points))
 	}
-	point := points[0]
+	point := result.Points[0]
 	if !point.UserStarred || !point.UserShared {
 		t.Fatalf("expected user signal booleans to carry through, got starred=%v shared=%v", point.UserStarred, point.UserShared)
 	}
@@ -160,12 +160,12 @@ func TestIngestResumesFromJournal(t *testing.T) {
 	store2 := &countingStore{InMemoryStore: NewInMemoryStore()}
 	ing2 := newIngestor(store2)
 	ing2.Journal = j2
-	points, err := ing2.Ingest(context.Background(), records)
+	result, err := ing2.Ingest(context.Background(), records)
 	if err != nil {
 		t.Fatalf("resume ingest: %v", err)
 	}
-	if len(points) != 5 {
-		t.Fatalf("expected 5 records on resume (records 20-24), got %d", len(points))
+	if len(result.Points) != 5 {
+		t.Fatalf("expected 5 records on resume (records 20-24), got %d", len(result.Points))
 	}
 	if j2.LastRecordIndex() != 24 {
 		t.Fatalf("expected journal to reach final record index 24, got %d", j2.LastRecordIndex())

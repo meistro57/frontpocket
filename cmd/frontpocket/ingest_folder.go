@@ -194,7 +194,7 @@ func runIngestFolder(args []string) error {
 	finalCount, _ := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
 	actualAdded := finalCount - baselineCount
 	fmt.Printf("storage write: inserted %d memory points into %s (embedded chunks: %d, collection total for project: %d, newly added: %d)\n",
-		len(points), cfg.Qdrant.Collection, chunksEmbedded, finalCount, actualAdded)
+		len(points.Points), cfg.Qdrant.Collection, chunksEmbedded, finalCount, actualAdded)
 	if journal != nil {
 		_ = journal.Remove()
 	}

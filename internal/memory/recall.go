@@ -190,6 +190,83 @@ func (s *InMemoryStore) DeleteByFilters(filters SearchFilters) error {
 	return nil
 }
 
+func (s *InMemoryStore) MemoryIDsExist(_ context.Context, ids []string) (map[string]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	index := make(map[string]struct{}, len(s.points))
+	for _, point := range s.points {
+		index[point.MemoryID] = struct{}{}
+	}
+
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		_, ok := index[id]
+		out[id] = ok
+	}
+	return out, nil
+}
+
+func (s *InMemoryStore) ConversationHasLegacy(_ context.Context, conversationID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, point := range s.points {
+		if !strings.EqualFold(strings.TrimSpace(point.ConversationID), strings.TrimSpace(conversationID)) {
+			continue
+		}
+		if !strings.Contains(point.MemoryID, "_msg_") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *InMemoryStore) ListConversationPointIDs(_ context.Context, conversationID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cid := strings.TrimSpace(conversationID)
+	if cid == "" {
+		return []string{}, nil
+	}
+
+	ids := make([]string, 0)
+	for _, point := range s.points {
+		if strings.EqualFold(strings.TrimSpace(point.ConversationID), cid) {
+			ids = append(ids, point.MemoryID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *InMemoryStore) DeleteByPointIDs(_ context.Context, pointIDs []string) error {
+	if len(pointIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	remove := make(map[string]struct{}, len(pointIDs))
+	for _, id := range pointIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed != "" {
+			remove[trimmed] = struct{}{}
+		}
+	}
+
+	kept := make([]MemoryPoint, 0, len(s.points))
+	for _, point := range s.points {
+		if _, ok := remove[point.MemoryID]; ok {
+			continue
+		}
+		kept = append(kept, point)
+	}
+	s.points = kept
+	return nil
+}
+
 func (s *InMemoryStore) ScrollRaw(_ context.Context, limit int, offset string, filters SearchFilters, since, until time.Time, includeCanonical bool) ([]MemoryPoint, string, error) {
 	s.mu.RLock()
 	points := append([]MemoryPoint(nil), s.points...)

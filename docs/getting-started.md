@@ -183,7 +183,22 @@ frontpocket ingest chatgpt ./export --no-caption
 
 # resume an interrupted import from a progress journal
 frontpocket ingest chatgpt ./export --resume data/progress.json
+
+# legacy-archive handling when re-importing into a collection that already
+# contains position-keyed points from before the stable-ID fix:
+# skip (default) | rewrite (re-key conversations, needs --id-map) | mixed
+frontpocket ingest chatgpt ./export --legacy-mode skip
+frontpocket ingest chatgpt ./export --legacy-mode rewrite --id-map ids_old_to_new.csv
 ```
+
+Memory IDs are keyed to the *source message id* —
+`{conversation_id}_msg_{message_id}_chunk_{NNN}` — so re-importing an
+updated archive never renumbers existing points. Records without a stable
+source id (claude project files, API-created entries) keep the legacy
+`{conversation_id}_turn_{NNNN}_chunk_{NNN}` form. Every ingest now checks
+whether a chunk's point already exists BEFORE embedding, which makes
+repeated and interrupted imports idempotent on their own, without the
+`--resume` journal. See `docs/agent-tasks/15_stable_message_id_ingest.md`.
 
 Attachments/assets are resolved against the export's `conversation_asset_file_names.json`
 and `library_files.json` mapping files, then embedded as real content:

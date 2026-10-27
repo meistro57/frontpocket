@@ -28,6 +28,8 @@ func runIngestClaude(args []string) error {
 	conversationID := flags.String("conversation-id", "", "only include the conversation with exactly this id")
 	limit := flags.Int("limit", 0, "cap the number of conversations processed (0 = no limit)")
 	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
+	legacyMode := flags.String("legacy-mode", "skip", "legacy conversation handling mode: skip, mixed, or rewrite")
+	idMapPath := flags.String("id-map", "", "path to write old_memory_id,new_memory_id CSV (rewrite mode)")
 	aiProvider := flags.String("ai-provider", "claude", "AI provider label stored in memory payloads")
 
 	normalizedArgs, sourcePath := normalizeIngestClaudeArgs(args)
@@ -43,7 +45,7 @@ func runIngestClaude(args []string) error {
 		positionals = append([]string{sourcePath}, positionals...)
 	}
 	if len(positionals) != 1 {
-		return fmt.Errorf("usage: frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--ai-provider <name>]")
+		return fmt.Errorf("usage: frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--legacy-mode <skip|mixed|rewrite>] [--id-map <path>] [--ai-provider <name>]")
 	}
 	if strings.TrimSpace(*aiProvider) == "" {
 		return fmt.Errorf("--ai-provider is required (example: --ai-provider claude)")
@@ -99,6 +101,19 @@ func runIngestClaude(args []string) error {
 	}
 	ingestor.SourceType = result.SourceType
 	ingestor.AIProvider = strings.TrimSpace(*aiProvider)
+	ingestor.LegacyMode = strings.ToLower(strings.TrimSpace(*legacyMode))
+	if ingestor.LegacyMode == "" {
+		ingestor.LegacyMode = "skip"
+	}
+	if strings.TrimSpace(*idMapPath) != "" && ingestor.LegacyMode != "rewrite" {
+		return fmt.Errorf("--id-map requires --legacy-mode rewrite")
+	}
+	if ingestor.LegacyMode == "rewrite" {
+		if strings.TrimSpace(*idMapPath) == "" {
+			return fmt.Errorf("--legacy-mode rewrite requires --id-map")
+		}
+		fmt.Printf("legacy rewrite requested; id-map path: %s\n", strings.TrimSpace(*idMapPath))
+	}
 	chunksEmbedded := 0
 	ingestor.ProgressFn = func(ev memory.ProgressEvent) {
 		chunksEmbedded = ev.ChunksEmbedded
@@ -141,22 +156,33 @@ func runIngestClaude(args []string) error {
 		return fmt.Errorf("integrity check baseline failed: %w", err)
 	}
 
-	points, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
+	ingestResult, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
 	if err != nil {
 		return fmt.Errorf("parsed %d records but storage ingest failed: %w", len(result.Records), err)
 	}
-	fmt.Printf("storage write: inserted %d memory points\n", len(points))
+	fmt.Printf("storage write: inserted %d memory points\n", len(ingestResult.Points))
+	fmt.Printf("dedupe: records skipped existing=%d chunks skipped existing=%d\n", ingestResult.RecordsSkippedExisting, ingestResult.ChunksSkippedExisting)
+	if ingestResult.ConversationsLegacySkipped > 0 {
+		fmt.Printf("legacy skip: conversations skipped=%d\n", ingestResult.ConversationsLegacySkipped)
+	}
+	if ingestor.LegacyMode == "rewrite" {
+		if err := writeIDMapCSV(strings.TrimSpace(*idMapPath), ingestResult.RewriteMappings); err != nil {
+			return fmt.Errorf("write id map: %w", err)
+		}
+		fmt.Printf("legacy rewrite: mappings=%d\n", len(ingestResult.RewriteMappings))
+	}
 	if chunksEmbedded == 0 {
-		chunksEmbedded = len(points)
+		chunksEmbedded = len(ingestResult.Points)
 	}
 	finalCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
 	if err != nil {
 		return fmt.Errorf("integrity check final count failed: %w", err)
 	}
 	actualAdded := finalCount - baselineCount
-	fmt.Printf("integrity check: baseline=%d final=%d expected_new=%d actual_new=%d\n", baselineCount, finalCount, chunksEmbedded, actualAdded)
-	if actualAdded != chunksEmbedded {
-		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", chunksEmbedded, actualAdded, strings.TrimSpace(*aiProvider), strings.TrimSpace(result.SourceType), strings.TrimSpace(*project))
+	expectedDelta := chunksEmbedded - ingestResult.LegacyPointsDeleted
+	fmt.Printf("integrity check: baseline=%d final=%d expected_new=%d actual_new=%d\n", baselineCount, finalCount, expectedDelta, actualAdded)
+	if actualAdded != expectedDelta {
+		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", expectedDelta, actualAdded, strings.TrimSpace(*aiProvider), strings.TrimSpace(result.SourceType), strings.TrimSpace(*project))
 	}
 	fmt.Println("integrity check: match")
 	if journal != nil {
@@ -169,7 +195,7 @@ func runIngestClaude(args []string) error {
 
 func printIngestClaudeHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Usage:")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--ai-provider <name>]")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest claude <export-folder> [--dry-run] [--project <name>] [--conversation <match>] [--conversation-id <id>] [--limit <n>] [--resume <path>] [--legacy-mode <skip|mixed|rewrite>] [--id-map <path>] [--ai-provider <name>]")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Command Reference:")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
@@ -200,7 +226,7 @@ func normalizeIngestClaudeArgs(args []string) ([]string, string) {
 		}
 		if strings.HasPrefix(trimmed, "--") {
 			normalized = append(normalized, trimmed)
-			if trimmed == "--project" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--limit" || trimmed == "--resume" || trimmed == "--ai-provider" {
+			if trimmed == "--project" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--limit" || trimmed == "--resume" || trimmed == "--legacy-mode" || trimmed == "--id-map" || trimmed == "--ai-provider" {
 				expectsValue = true
 			}
 			continue

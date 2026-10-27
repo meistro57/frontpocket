@@ -417,6 +417,166 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 	return nil
 }
 
+func (s *QdrantMemoryStore) MemoryIDsExist(ctx context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	pointIDToMemoryID := make(map[string]string, len(ids))
+	pointIDs := make([]string, 0, len(ids))
+	for _, memoryID := range ids {
+		trimmed := strings.TrimSpace(memoryID)
+		if trimmed == "" {
+			continue
+		}
+		pointID := qdrantPointID(trimmed)
+		if _, seen := pointIDToMemoryID[pointID]; seen {
+			continue
+		}
+		pointIDToMemoryID[pointID] = trimmed
+		pointIDs = append(pointIDs, pointID)
+	}
+
+	const batchSize = 256
+	for start := 0; start < len(pointIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(pointIDs) {
+			end = len(pointIDs)
+		}
+		batch := pointIDs[start:end]
+		var response struct {
+			Result []struct {
+				ID any `json:"id"`
+			} `json:"result"`
+		}
+		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points", s.collection), map[string]any{"ids": batch, "with_payload": false, "with_vector": false}, &response)
+		if err != nil {
+			if status == http.StatusNotFound {
+				continue
+			}
+			return nil, err
+		}
+		for _, hit := range response.Result {
+			qid := strings.TrimSpace(asString(hit.ID))
+			if qid == "" {
+				continue
+			}
+			if memoryID, ok := pointIDToMemoryID[qid]; ok {
+				out[memoryID] = true
+			}
+		}
+	}
+
+	for _, memoryID := range ids {
+		if _, ok := out[memoryID]; !ok {
+			out[memoryID] = false
+		}
+	}
+	return out, nil
+}
+
+func (s *QdrantMemoryStore) ConversationHasLegacy(ctx context.Context, conversationID string) (bool, error) {
+	ids, err := s.ListConversationPointIDs(ctx, conversationID)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range ids {
+		if !strings.Contains(id, "_msg_") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *QdrantMemoryStore) ListConversationPointIDs(ctx context.Context, conversationID string) ([]string, error) {
+	cid := strings.TrimSpace(conversationID)
+	if cid == "" {
+		return []string{}, nil
+	}
+
+	ids := make([]string, 0)
+	var offset any
+	lastOffset := ""
+
+	for {
+		body := map[string]any{
+			"limit":        256,
+			"with_payload": true,
+			"with_vector":  false,
+			"filter": map[string]any{
+				"must": []map[string]any{
+					{
+						"key":   "conversation_id",
+						"match": map[string]any{"value": cid},
+					},
+				},
+			},
+		}
+		if offset != nil {
+			body["offset"] = offset
+		}
+
+		var response struct {
+			Result struct {
+				Points []struct {
+					Payload map[string]any `json:"payload"`
+				} `json:"points"`
+				NextPageOffset any `json:"next_page_offset"`
+			} `json:"result"`
+		}
+
+		status, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/scroll", s.collection), body, &response)
+		if err != nil {
+			if status == http.StatusNotFound {
+				return []string{}, nil
+			}
+			return nil, err
+		}
+
+		for _, point := range response.Result.Points {
+			memoryID := strings.TrimSpace(asString(point.Payload["memory_id"]))
+			if memoryID != "" {
+				ids = append(ids, memoryID)
+			}
+		}
+
+		if response.Result.NextPageOffset == nil {
+			break
+		}
+		nextRaw := strings.TrimSpace(fmt.Sprintf("%v", response.Result.NextPageOffset))
+		if nextRaw == "" || nextRaw == lastOffset {
+			break
+		}
+		lastOffset = nextRaw
+		offset = response.Result.NextPageOffset
+	}
+
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *QdrantMemoryStore) DeleteByPointIDs(ctx context.Context, pointIDs []string) error {
+	if len(pointIDs) == 0 {
+		return nil
+	}
+
+	qdrantIDs := make([]string, 0, len(pointIDs))
+	for _, memoryID := range pointIDs {
+		trimmed := strings.TrimSpace(memoryID)
+		if trimmed == "" {
+			continue
+		}
+		qdrantIDs = append(qdrantIDs, qdrantPointID(trimmed))
+	}
+	if len(qdrantIDs) == 0 {
+		return nil
+	}
+
+	_, err := s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/delete?wait=true", s.collection), map[string]any{"points": qdrantIDs}, nil)
+	return err
+}
+
 func (s *QdrantMemoryStore) upsertQdrantPointsInBatches(ctx context.Context, points []qdrantPoint) error {
 	if len(points) == 0 {
 		return nil
@@ -1344,6 +1504,7 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 	payload := map[string]any{
 		"memory_id":                point.MemoryID,
 		"conversation_id":          point.ConversationID,
+		"message_id":               point.MessageID,
 		"session_id":               point.SessionID,
 		"source_type":              point.SourceType,
 		"source_title":             point.SourceTitle,

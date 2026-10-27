@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"flag"
 	"fmt"
@@ -55,11 +56,13 @@ func runIngestChatGPT(args []string) error {
 	conversation := flags.String("conversation", "", "only include conversations whose title or id contains this value")
 	conversationID := flags.String("conversation-id", "", "only include the conversation with exactly this id (exact match, useful for targeted debugging)")
 	out := flags.String("out", "", "write normalized JSONL output to this path")
-	resume := flags.String("resume", "", "path to a JSON progress journal; resumes from it if present and updates it as batches are stored")
+	resume := flags.String("resume", "", "path to a JSON progress journal; used to resume conversation parsing from a previous run and track progress")
 	captionCachePath := flags.String("caption-cache", "", "path to persistent attachment caption cache (defaults alongside --resume when set)")
-	parseCheckpointPath := flags.String("parse-checkpoint", "", "path to parse-phase conversation checkpoint file (defaults alongside --resume when set)")
+	parseCheckpointPath := flags.String("parse-checkpoint", "", "path to parse-phase conversation checkpoint file (defaults to `parse_checkpoint.json` in the same directory as --resume when --resume is set and this is not explicitly set)")
 	limit := flags.Int("limit", 0, "cap the number of conversations processed (0 = no limit)")
 	noCaption := flags.Bool("no-caption", false, "resolve attachment metadata but skip vision captioning API calls")
+	legacyMode := flags.String("legacy-mode", "skip", "legacy conversation handling mode: skip, mixed, or rewrite")
+	idMapPath := flags.String("id-map", "", "path to write old_memory_id,new_memory_id CSV (rewrite mode)")
 	aiProvider := flags.String("ai-provider", "", "AI provider label stored in memory payloads (required, e.g. chatgpt)")
 
 	normalizedArgs, sourcePath := normalizeIngestChatGPTArgs(args)
@@ -75,7 +78,7 @@ func runIngestChatGPT(args []string) error {
 		positionals = append([]string{sourcePath}, positionals...)
 	}
 	if len(positionals) != 1 {
-		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--ai-provider <name>]")
+		return fmt.Errorf("usage: frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--legacy-mode <skip|mixed|rewrite>] [--id-map <path>] [--ai-provider <name>]")
 	}
 	if strings.TrimSpace(*aiProvider) == "" {
 		return fmt.Errorf("--ai-provider is required (example: --ai-provider chatgpt)")
@@ -192,6 +195,19 @@ func runIngestChatGPT(args []string) error {
 	}
 
 	chunksEmbedded := 0
+	ingestor.LegacyMode = strings.ToLower(strings.TrimSpace(*legacyMode))
+	if ingestor.LegacyMode == "" {
+		ingestor.LegacyMode = "skip"
+	}
+	if strings.TrimSpace(*idMapPath) != "" && ingestor.LegacyMode != "rewrite" {
+		return fmt.Errorf("--id-map requires --legacy-mode rewrite")
+	}
+	if ingestor.LegacyMode == "rewrite" {
+		if strings.TrimSpace(*idMapPath) == "" {
+			return fmt.Errorf("--legacy-mode rewrite requires --id-map")
+		}
+		fmt.Printf("legacy rewrite requested; id-map path: %s\n", strings.TrimSpace(*idMapPath))
+	}
 	ingestor.ProgressFn = func(ev memory.ProgressEvent) {
 		chunksEmbedded = ev.ChunksEmbedded
 		elapsed := ev.Elapsed.Truncate(time.Second)
@@ -237,22 +253,33 @@ func runIngestChatGPT(args []string) error {
 		return fmt.Errorf("integrity check baseline failed: %w", err)
 	}
 
-	points, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
+	ingestResult, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(result.Records))
 	if err != nil {
 		return fmt.Errorf("parsed %d records but storage ingest failed: %w", len(result.Records), err)
 	}
-	fmt.Printf("storage write: inserted %d memory points\n", len(points))
+	fmt.Printf("storage write: inserted %d memory points\n", len(ingestResult.Points))
+	fmt.Printf("dedupe: records skipped existing=%d chunks skipped existing=%d\n", ingestResult.RecordsSkippedExisting, ingestResult.ChunksSkippedExisting)
+	if ingestResult.ConversationsLegacySkipped > 0 {
+		fmt.Printf("legacy skip: conversations skipped=%d\n", ingestResult.ConversationsLegacySkipped)
+	}
+	if ingestor.LegacyMode == "rewrite" {
+		if err := writeIDMapCSV(strings.TrimSpace(*idMapPath), ingestResult.RewriteMappings); err != nil {
+			return fmt.Errorf("write id map: %w", err)
+		}
+		fmt.Printf("legacy rewrite: mappings=%d\n", len(ingestResult.RewriteMappings))
+	}
 	if chunksEmbedded == 0 {
-		chunksEmbedded = len(points)
+		chunksEmbedded = len(ingestResult.Points)
 	}
 	finalCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
 	if err != nil {
 		return fmt.Errorf("integrity check final count failed: %w", err)
 	}
 	actualAdded := finalCount - baselineCount
-	fmt.Printf("integrity check: baseline=%d final=%d expected_new=%d actual_new=%d\n", baselineCount, finalCount, chunksEmbedded, actualAdded)
-	if actualAdded != chunksEmbedded {
-		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", chunksEmbedded, actualAdded, strings.TrimSpace(*aiProvider), integritySourceType, strings.TrimSpace(*project))
+	expectedDelta := chunksEmbedded - ingestResult.LegacyPointsDeleted
+	fmt.Printf("integrity check: baseline=%d final=%d expected_new=%d actual_new=%d\n", baselineCount, finalCount, expectedDelta, actualAdded)
+	if actualAdded != expectedDelta {
+		return fmt.Errorf("integrity check mismatch: expected %d new points but qdrant count changed by %d for ai_provider=%q source_type=%q project=%q", expectedDelta, actualAdded, strings.TrimSpace(*aiProvider), integritySourceType, strings.TrimSpace(*project))
 	}
 	fmt.Println("integrity check: match")
 
@@ -287,7 +314,7 @@ func printIngestHelp(output *os.File) {
 
 func printIngestChatGPTHelp(flags *flag.FlagSet) {
 	fmt.Fprintln(flags.Output(), "Usage:")
-	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--ai-provider <name>]")
+	fmt.Fprintln(flags.Output(), "  frontpocket ingest chatgpt <zip-or-folder> [--dry-run] [--project <name>] [--since <date>] [--conversation <match>] [--conversation-id <id>] [--out <path>] [--resume <path>] [--caption-cache <path>] [--parse-checkpoint <path>] [--limit <n>] [--no-caption] [--legacy-mode <skip|mixed|rewrite>] [--id-map <path>] [--ai-provider <name>]")
 	fmt.Fprintln(flags.Output())
 	fmt.Fprintln(flags.Output(), "Command Reference:")
 	fmt.Fprintln(flags.Output(), "  frontpocket ingest --help")
@@ -385,7 +412,7 @@ func normalizeIngestChatGPTArgs(args []string) ([]string, string) {
 
 		if strings.HasPrefix(trimmed, "--") {
 			normalized = append(normalized, trimmed)
-			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--out" || trimmed == "--resume" || trimmed == "--caption-cache" || trimmed == "--parse-checkpoint" || trimmed == "--limit" || trimmed == "--ai-provider" {
+			if trimmed == "--project" || trimmed == "--since" || trimmed == "--conversation" || trimmed == "--conversation-id" || trimmed == "--out" || trimmed == "--resume" || trimmed == "--caption-cache" || trimmed == "--parse-checkpoint" || trimmed == "--limit" || trimmed == "--legacy-mode" || trimmed == "--id-map" || trimmed == "--ai-provider" {
 				expectsValue = true
 			}
 			continue
@@ -507,6 +534,38 @@ func buildCLIIngestIntegrityFilter(sourceType, project, aiProvider string) map[s
 		filter["project"] = strings.TrimSpace(project)
 	}
 	return filter
+}
+
+func writeIDMapCSV(path string, mappings []memory.IDMapEntry) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return fmt.Errorf("id-map path is required")
+	}
+	parent := filepath.Dir(trimmed)
+	if parent != "." {
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return err
+		}
+	}
+	file, err := os.Create(trimmed)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	if err := writer.Write([]string{"old_memory_id", "new_memory_id"}); err != nil {
+		return err
+	}
+	for _, row := range mappings {
+		if err := writer.Write([]string{row.OldMemoryID, row.NewMemoryID}); err != nil {
+			return err
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func selectCLIEmbedder(cfg config.Config) (embed.Embedder, error) {

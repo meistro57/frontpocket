@@ -78,6 +78,7 @@ func memoryPointFromPayload(payload map[string]any) memory.MemoryPoint {
 	return memory.MemoryPoint{
 		MemoryID:               asString(payload["memory_id"]),
 		ConversationID:         asString(payload["conversation_id"]),
+		MessageID:              asString(payload["message_id"]),
 		SessionID:              asString(payload["session_id"]),
 		SourceType:             asString(payload["source_type"]),
 		SourceTitle:            asString(payload["source_title"]),

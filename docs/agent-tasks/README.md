@@ -27,5 +27,20 @@ non-goals section to keep scope tight.
 07. **Claude import escaping fix** — small follow-up: double-escaped
     newlines in `tool_use`/`tool_result`-derived text.
 
+08. **Ingest reliability fix** — hardening the import path against partial
+    failures.
+09. **Qdrant write reliability fix** — batched/verified writes to the store.
+10. **Broken pipe root cause** — diagnosing transport errors during large
+    ingest runs.
+11. **Claude resume and timeout retry** — progress journals for claude imports.
+12. **Parse checkpoint embed resume bug** — resume state interacting badly with
+    embedding checkpoints.
+13. **Chunk-position aware cleanup** — `memory_cleanup.py` understanding chunk
+    ordinals inside a turn.
+14. **Minddrill new field filters** — filter support for newer payload fields.
+15. **Stable message-ID ingest fix** — memory ids keyed on source message
+    uuids instead of global batch position; pre-embed existence check; legacy
+    `--legacy-mode skip|rewrite|mixed` migration + `scripts/migrate_stable_ids.py`.
+
 See also: `docs/architecture.md`, `docs/memory-model.md` for the permanent
 reference documentation this folder deliberately stays separate from.

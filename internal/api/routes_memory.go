@@ -62,7 +62,7 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 		ingestor.Project = req.Project
 	}
 
-	points, err := ingestor.Ingest(r.Context(), records)
+	ingestResult, err := ingestor.Ingest(r.Context(), records)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "INGEST_FAILED",
@@ -72,13 +72,13 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids := make([]string, 0, len(points))
-	for _, p := range points {
+	ids := make([]string, 0, len(ingestResult.Points))
+	for _, p := range ingestResult.Points {
 		ids = append(ids, p.MemoryID)
 	}
 
 	writeJSON(w, http.StatusOK, memory.IngestChatResponse{
-		InsertedCount: len(points),
+		InsertedCount: len(ingestResult.Points),
 		MemoryIDs:     ids,
 	})
 }

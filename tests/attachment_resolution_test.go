@@ -988,12 +988,12 @@ func TestParseChatGPTExportCheckpointedConversationsStillFeedResumeJournal(t *te
 		SpeakerRules: memory.SpeakerRules{StoreUser: true, StoreAssistant: true},
 		Journal:      reopenedJournal,
 	}
-	inserted, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(resumedResult.Records))
+	ingestResult, err := ingestor.Ingest(context.Background(), memory.ToMessageRecords(resumedResult.Records))
 	if err != nil {
 		t.Fatalf("resume ingest failed: %v", err)
 	}
-	if len(inserted) != 1 {
-		t.Fatalf("expected only one remaining record to ingest after journal resume, got %d", len(inserted))
+	if len(ingestResult.Points) != 1 {
+		t.Fatalf("expected only one remaining record to ingest after journal resume, got %d", len(ingestResult.Points))
 	}
 	if reopenedJournal.LastRecordIndex() != 1 {
 		t.Fatalf("expected journal to advance to final record index 1, got %d", reopenedJournal.LastRecordIndex())

@@ -47,6 +47,7 @@ const (
 
 type MessageRecord struct {
 	ConversationID         string   `json:"conversation_id"`
+	MessageID              string   `json:"message_id,omitempty"`
 	Timestamp              string   `json:"timestamp"`
 	Speaker                string   `json:"speaker"`
 	Text                   string   `json:"text"`
@@ -72,6 +73,7 @@ type MessageRecord struct {
 type MemoryPoint struct {
 	MemoryID               string     `json:"memory_id"`
 	ConversationID         string     `json:"conversation_id"`
+	MessageID              string     `json:"message_id,omitempty"`
 	SessionID              string     `json:"session_id,omitempty"`
 	SourceType             string     `json:"source_type"`
 	SourceTitle            string     `json:"source_title"`
