@@ -402,8 +402,8 @@ def parse_args():
     p.add_argument("--source", default="frontpocket_memory")
     p.add_argument("--dest", default="fp_fix_mig_copy")
     p.add_argument("--archive", action="append",
-                   default=["/home/mark/frontpocket/GPT/conversations-*.json"],
-                   help="archive dir or glob (repeatable)")
+                   default=None,
+                   help="archive glob(s); default $FRONTPOCKET_CHATGPT_ARCHIVE or GPT/conversations-*.json")
     p.add_argument("--emit-map", default="")
     p.add_argument("--max-points", type=int, default=30000, help="legacy scan window cap (points)")
     p.add_argument("--sample-conversations", type=int, default=25, help="0 = all scanned")
@@ -414,6 +414,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if not args.archive:
+        args.archive = [os.environ.get("FRONTPOCKET_CHATGPT_ARCHIVE") or "GPT/conversations-*.json"]
     if args.source in PROD_BLOCK and args.apply:
         # source prod is fine read-only; the guard is on writes (dest must be fp_fix_*)
         pass
