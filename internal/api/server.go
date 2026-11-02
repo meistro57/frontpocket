@@ -75,7 +75,12 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, err
 	}
 
-	fallbackStore := memory.NewInMemoryStore()
+	// The in-memory fallback keeps serving reads and writes when Qdrant is
+	// unreachable, but it is opt-in because it silently drops durability.
+	var fallbackStore memory.MemoryStore
+	if cfg.App.AllowMemoryFallback {
+		fallbackStore = memory.NewInMemoryStore()
+	}
 	memStore := store.NewQdrantMemoryStore(
 		qdrant,
 		embedder,
@@ -92,7 +97,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 			cfg.MindDrillMemory.Collection,
 			cfg.Qdrant.VectorName,
 			cfg.Qdrant.Distance,
-			memory.NewInMemoryStore(),
+			fallbackStore,
 		)
 	}
 	ingestor := memory.Ingestor{

@@ -165,6 +165,7 @@ func TestMindDrillInspectCommand(t *testing.T) {
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_BASE_URL", embeddingServer.URL)
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	if err := run([]string{"inspect", "--sample-limit", "50", "research_collection"}); err != nil {
@@ -222,6 +223,7 @@ func TestMindDrillDeepDrillPlanCommand(t *testing.T) {
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_BASE_URL", embeddingServer.URL)
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "plan", "--session", "centerstone", "--collection", "corpus", "--research-question", "trace earliest bridge", "--blockers", "PROVENANCE_GAP,CHRONOLOGY_GAP"})
@@ -272,6 +274,7 @@ func TestMindDrillDeepDrillRunCommand(t *testing.T) {
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_BASE_URL", embeddingServer.URL)
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "run", "--session", "centerstone", "--collection", "corpus", "--steps", "1", "--blockers", "PROVENANCE_GAP"})
@@ -293,6 +296,7 @@ func TestMindDrillDeepDrillThoughtsCommand(t *testing.T) {
 
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "thoughts", "--session", "s1", "--summary"})
@@ -314,6 +318,7 @@ func TestMindDrillDeepDrillShowCommand(t *testing.T) {
 
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "show", "target-thought"})
@@ -337,6 +342,7 @@ func TestMindDrillDeepDrillProvenanceCommandByThoughtID(t *testing.T) {
 
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "provenance", "t-provenance", "--collection", "corpus"})
@@ -358,6 +364,7 @@ func TestMindDrillDeepDrillProvenanceCommandBySource(t *testing.T) {
 
 	t.Setenv("EMBEDDING_PROVIDER", "ollama")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("EMBEDDING_DIMENSIONS", "4")
 	t.Setenv("QDRANT_URL", qdrant.URL)
 
 	err := run([]string{"deepdrill", "provenance", "--collection", "corpus", "--source", "doc-A", "--json"})

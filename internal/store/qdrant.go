@@ -86,10 +86,6 @@ func (c *QdrantClient) CountPointsWithFilter(ctx context.Context, collection str
 	return c.countPointsWithFilter(ctx, collection, filter, true)
 }
 
-func (c *QdrantClient) CountPointsEstimateWithFilter(ctx context.Context, collection string, filter map[string]any) (int, error) {
-	return c.countPointsWithFilter(ctx, collection, filter, false)
-}
-
 func (c *QdrantClient) countPointsWithFilter(ctx context.Context, collection string, filter map[string]any, exact bool) (int, error) {
 	trimmedCollection := strings.TrimSpace(collection)
 	if trimmedCollection == "" {
@@ -333,6 +329,8 @@ type QdrantMemoryStore struct {
 	distinctFieldVals        map[string]distinctFieldCacheEntry
 	unfilteredAggCacheMu     sync.RWMutex
 	unfilteredAggCacheByColl map[string]unfilteredAggregationCacheEntry
+	indexMu                  sync.Mutex
+	indexedCollections       map[string]bool
 }
 
 type distinctFieldCacheEntry struct {
@@ -363,6 +361,7 @@ func NewQdrantMemoryStore(client *QdrantClient, embedder embed.Embedder, collect
 		distinctCacheTTL:         2 * time.Minute,
 		distinctFieldVals:        make(map[string]distinctFieldCacheEntry),
 		unfilteredAggCacheByColl: make(map[string]unfilteredAggregationCacheEntry),
+		indexedCollections:       make(map[string]bool),
 	}
 }
 
@@ -373,6 +372,7 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 
 	if err := s.populateVectors(ctx, points); err != nil {
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, err)
 			return s.fallback.Upsert(ctx, points)
 		}
 		return err
@@ -384,6 +384,7 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 			return err
 		}
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, err)
 			return s.fallback.Upsert(ctx, points)
 		}
 		return err
@@ -405,6 +406,7 @@ func (s *QdrantMemoryStore) Upsert(ctx context.Context, points []memory.MemoryPo
 	if err := s.upsertQdrantPointsInBatches(ctx, qdrantPoints); err != nil {
 		if s.fallback != nil {
 			if fallbackErr := s.fallback.Upsert(ctx, points); fallbackErr == nil {
+				memory.MarkStoreDegraded(ctx, err)
 				return nil
 			}
 		}
@@ -690,6 +692,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 	vector, err := s.embedder.EmbedText(ctx, query)
 	if err != nil {
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, err)
 			return s.fallback.Search(ctx, req)
 		}
 		return nil, err
@@ -699,6 +702,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 			return nil, err
 		}
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, err)
 			return s.fallback.Search(ctx, req)
 		}
 		return nil, err
@@ -729,6 +733,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 	_, err = s.client.doJSON(ctx, http.MethodPost, fmt.Sprintf("/collections/%s/points/search", s.collection), body, &response)
 	if err != nil {
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, err)
 			return s.fallback.Search(ctx, req)
 		}
 		return nil, err
@@ -744,6 +749,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 		results = append(results, item)
 	}
 	if len(results) == 0 && s.fallback != nil {
+		memory.MarkStoreDegraded(ctx, nil)
 		return s.fallback.Search(ctx, req)
 	}
 	return results, nil
@@ -752,6 +758,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilters) (memory.MemoryStats, error) {
 	if strings.TrimSpace(s.collection) == "" {
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, nil)
 			return s.fallback.Stats(ctx, filters)
 		}
 		return memory.MemoryStats{}, fmt.Errorf("QDRANT_COLLECTION is required")
@@ -783,6 +790,7 @@ func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilt
 	}
 	if totalErr != nil {
 		if s.fallback != nil {
+			memory.MarkStoreDegraded(ctx, totalErr)
 			return s.fallback.Stats(ctx, filters)
 		}
 		return memory.MemoryStats{}, totalErr
@@ -979,7 +987,7 @@ func (s *QdrantMemoryStore) aggregateDistinctFieldCounts(ctx context.Context, fi
 	}
 
 	for _, value := range values {
-		count, countErr := s.client.CountPointsEstimateWithFilter(ctx, s.collection, appendFilterMatch(filter, field, value))
+		count, countErr := s.client.CountPointsWithFilter(ctx, s.collection, appendFilterMatch(filter, field, value))
 		if countErr != nil {
 			return nil, nil, countErr
 		}
@@ -1225,14 +1233,49 @@ func (s *QdrantMemoryStore) ensureCollection(ctx context.Context, dims int) erro
 		}
 
 		_, createErr := s.client.doJSON(ctx, http.MethodPut, fmt.Sprintf("/collections/%s", s.collection), createBody, nil)
-		return createErr
+		if createErr != nil {
+			return createErr
+		}
+		s.ensurePayloadIndexes(ctx)
+		return nil
 	}
 
 	existingSize := parseVectorSize(response.Result.Config.Params.Vectors, s.vectorName)
 	if existingSize > 0 && existingSize != dims {
 		return &DimensionMismatchError{CollectionSize: existingSize, EmbeddingSize: dims}
 	}
+	s.ensurePayloadIndexes(ctx)
 	return nil
+}
+
+// ensurePayloadIndexes creates the filter indexes once per collection per
+// process. Failures are logged but never fail the surrounding operation, since
+// a missing index costs speed rather than correctness.
+func (s *QdrantMemoryStore) ensurePayloadIndexes(ctx context.Context) {
+	if s.collection == "" || s.client == nil {
+		return
+	}
+
+	s.indexMu.Lock()
+	alreadyEnsured := s.indexedCollections[s.collection]
+	s.indexMu.Unlock()
+	if alreadyEnsured {
+		return
+	}
+
+	if err := s.client.EnsurePayloadIndexes(ctx, s.collection, memoryPayloadIndexes); err != nil {
+		if s.client.logger != nil {
+			s.client.logger.Warn("could not ensure qdrant payload indexes", "collection", s.collection, "error", err)
+		}
+		return
+	}
+
+	s.indexMu.Lock()
+	if s.indexedCollections == nil {
+		s.indexedCollections = make(map[string]bool)
+	}
+	s.indexedCollections[s.collection] = true
+	s.indexMu.Unlock()
 }
 
 func parseVectorSize(raw json.RawMessage, vectorName string) int {

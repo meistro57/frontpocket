@@ -30,5 +30,42 @@ jobs:
             exit 1
           fi
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run unit tests
+        run: go test ./... -timeout 300s
+
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.12.1
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests against live Qdrant and Redis
+        env:
+          FRONTPOCKET_TEST_QDRANT_URL: http://127.0.0.1:6333
+          FRONTPOCKET_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+        run: go test ./... -timeout 300s -count=1

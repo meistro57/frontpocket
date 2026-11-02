@@ -42,6 +42,12 @@ No crystal ball. Just retrieval with receipts.
 
 ## What's new
 
+- Memory writes and reads no longer pretend to succeed when Qdrant is unreachable. Ingest fails with `503` instead of reporting points that were never persisted, and search, browse, stats, context-pack, and MindDrill search fail rather than returning an empty result set that looks like "no memory".
+- Responses carry `"store": {"degraded": true, "reason": "..."}` when a request was served from the in-memory fallback store, and ingest additionally reports `"persisted": false`. The fallback is now opt-in via `FRONTPOCKET_ALLOW_MEMORY_FALLBACK=false`.
+- Filter payload indexes (`project`, `memory_kind`, `speaker`, `source_type`, `conversation_id`, `ai_provider`, `ai_model`, `feedback_rating`, `attachment_source_system`, `tags`, `status`, `user_starred`, `user_shared`, `canonical`, `timestamp`) are created automatically, so filtered search, browse, and stats avoid full-collection scans.
+- Filtered memory stats now report exact per-project/kind/speaker counts; the previous approximate count could under-report totals.
+- The Ollama embedder only falls back to the legacy `/api/embeddings` endpoint when the modern `/api/embed` endpoint is missing, and reports both failures instead of hiding the real error behind a misleading 404.
+- Test suite: Qdrant/Redis-backed tests use compose-matching URLs, run-unique collections with cleanup, and skip instead of hanging when a store is down. CI gained a job that starts Qdrant and Redis so those flows run on every push.
 - Memory payloads now include `ai_provider`, `ai_model`, `user_starred`, `user_shared`, `feedback_rating`, `feedback_note`, and `attachment_*` metadata fields for each point in `frontpocket_memory`.
 - New filter fields are available end-to-end (search, stats, browse): `ai_provider`, `ai_model`, `user_starred`, `user_shared`, `feedback_rating`, and `has_attachment`.
 - `GET /memory/browse` is now available for cursor-based browsing with explicit filters (`limit`, `offset`, `since`, `until`, `include_canonical`, plus all memory filter fields).
@@ -89,6 +95,15 @@ GET  /openapi.json
 POST /memory/search
 POST /memory/context-pack
 ```
+
+### When the store is unavailable
+
+FrontPocket would rather say "I could not check" than invent an empty answer.
+
+- **Writes:** ingest returns `503` (`INGEST_FAILED`) when points could not be persisted. The response only reports success for data that reached Qdrant.
+- **Reads:** search, browse, stats, context-pack, and MindDrill search return `503` when the store cannot answer. A dimension mismatch stays a `500`, because that is a configuration error rather than an outage.
+- **Opt-in fallback:** with `FRONTPOCKET_ALLOW_MEMORY_FALLBACK=true`, reads and writes fall back to a process-local in-memory store. Those responses include `"store": {"degraded": true, "reason": "..."}`, and ingest also sets `"persisted": false`. Ingested data disappears when the process exits.
+- **Indexes:** filter payload indexes are created on first use of a collection, so filtered queries do not degrade into scans as the corpus grows.
 
 ---
 
@@ -542,6 +557,13 @@ go run ./cmd/frontpocket --version
 ```
 
 CI runs on every push and pull request through `.github/workflows/test.yml`.
+
+Qdrant- and Redis-backed tests (ingest, search, stats, chat) default to
+`http://127.0.0.1:6333` and `redis://127.0.0.1:6379/0`, matching `docker-compose.yml`. They
+create a run-unique collection per test and drop it afterwards, and skip rather than hang when
+a store is unreachable. Override with `FRONTPOCKET_TEST_QDRANT_URL` /
+`FRONTPOCKET_TEST_REDIS_URL`, or set `FRONTPOCKET_SKIP_INTEGRATION=1` to skip them. CI runs a
+second job with Qdrant and Redis services so they actually execute there.
 
 ---
 

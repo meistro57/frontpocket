@@ -17,6 +17,7 @@ import (
 )
 
 func TestProposedCanonApproveAndRejectEndpoints(t *testing.T) {
+	qdrantURL, redisURL := requireLiveStores(t)
 	queuePath := filepath.Join(t.TempDir(), "proposed.json")
 	t.Setenv("FRONTPOCKET_PROPOSED_CANON_PATH", queuePath)
 
@@ -31,8 +32,8 @@ func TestProposedCanonApproveAndRejectEndpoints(t *testing.T) {
 
 	cfg := config.Config{
 		App:         config.AppConfig{Host: "127.0.0.1", Port: 8088},
-		Qdrant:      config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:       config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Qdrant:      config.QdrantConfig{URL: qdrantURL, Collection: testCollectionName(t, qdrantURL, "frontpocket_test")},
+		Redis:       config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding:   config.EmbeddingConfig{Provider: "ollama", OllamaModel: "nomic-embed-text", OllamaBaseURL: embeddingServer.URL, Dimensions: 4},
 		Chat:        config.ChatConfig{Provider: "none"},
 		Ingestion:   config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},

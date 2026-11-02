@@ -49,7 +49,14 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	if err == nil {
 		return batch, nil
 	}
-	return e.embedBatchLegacy(ctx, texts)
+	if !isEndpointUnsupported(err) {
+		return nil, err
+	}
+	legacyBatch, legacyErr := e.embedBatchLegacy(ctx, texts)
+	if legacyErr == nil {
+		return legacyBatch, nil
+	}
+	return nil, fmt.Errorf("ollama embedding failed: %w (legacy fallback: %v)", err, legacyErr)
 }
 
 func (e *OllamaEmbedder) ProviderName() string { return "ollama" }

@@ -626,6 +626,7 @@ func (s *Server) openAPISpec() map[string]any {
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/SearchResult"},
 						},
+						"store": map[string]any{"$ref": "#/components/schemas/StoreStatus"},
 					},
 				},
 				"ContextPackRequest": map[string]any{
@@ -649,6 +650,7 @@ func (s *Server) openAPISpec() map[string]any {
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/SearchResult"},
 						},
+						"store": map[string]any{"$ref": "#/components/schemas/StoreStatus"},
 					},
 				},
 				"MessageRecord": map[string]any{
@@ -691,6 +693,17 @@ func (s *Server) openAPISpec() map[string]any {
 							"type":  "array",
 							"items": map[string]any{"type": "string"},
 						},
+						"persisted": map[string]any{"type": "boolean", "description": "False when the batch was served by the in-memory fallback store and will not survive a restart."},
+						"store":     map[string]any{"$ref": "#/components/schemas/StoreStatus"},
+					},
+				},
+				"StoreStatus": map[string]any{
+					"type":        "object",
+					"description": "Present only when the request was served from a degraded backend, such as the in-memory fallback store.",
+					"required":    []string{"degraded"},
+					"properties": map[string]any{
+						"degraded": map[string]any{"type": "boolean"},
+						"reason":   map[string]any{"type": "string"},
 					},
 				},
 				"MemoryStats": map[string]any{

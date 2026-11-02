@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/meistro57/frontpocket/internal/config"
-	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/memoryloop"
 	"github.com/meistro57/frontpocket/internal/store"
 )
@@ -178,7 +177,7 @@ func runMemoryLoopApprove(args []string) error {
 	if err != nil {
 		return err
 	}
-	canonicalStore := store.NewQdrantMemoryStore(store.NewQdrantClient(cfg.Qdrant.URL), embedder, cfg.Qdrant.Collection, cfg.Qdrant.VectorName, cfg.Qdrant.Distance, memory.NewInMemoryStore())
+	canonicalStore := store.NewQdrantMemoryStore(store.NewQdrantClient(cfg.Qdrant.URL), embedder, cfg.Qdrant.Collection, cfg.Qdrant.VectorName, cfg.Qdrant.Distance, nil)
 	queue := memoryloop.NewFileReviewQueue(*queuePath)
 	candidate, err := queue.Approve(context.Background(), strings.TrimSpace(*id), strings.TrimSpace(*reviewedBy), canonicalStore, nil)
 	if err != nil {

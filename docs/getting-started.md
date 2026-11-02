@@ -344,3 +344,17 @@ go test ./...
 ```
 
 A matching CI check runs the same suite on GitHub Actions for pushes and pull requests (`.github/workflows/test.yml`).
+
+Some tests exercise a real Qdrant and Redis (API ingest/search/stats/chat flows). They default
+to `http://127.0.0.1:6333` and `redis://127.0.0.1:6379/0`, matching `docker-compose.yml`. Each
+run creates a run-unique collection and drops it afterwards, so repeated runs cannot inherit
+stale vectors and hit dimension-mismatch failures.
+
+- Start the stack first (`docker compose up -d qdrant redis`) to run everything.
+- Point the tests elsewhere with `FRONTPOCKET_TEST_QDRANT_URL` and `FRONTPOCKET_TEST_REDIS_URL`.
+- Set `FRONTPOCKET_SKIP_INTEGRATION=1` to skip them entirely.
+
+When a store is unreachable those tests skip instead of hanging, so `go test ./...` stays fast
+without a running backend. CI runs a second job with Qdrant and Redis services so the
+integration tests execute there too.
+

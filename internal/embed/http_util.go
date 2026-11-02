@@ -52,7 +52,7 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, headers
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("embedding provider returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return &embedStatusError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}
 	}
 	if out == nil {
 		return nil
@@ -76,6 +76,23 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+type embedStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *embedStatusError) Error() string {
+	return fmt.Sprintf("embedding provider returned status %d: %s", e.StatusCode, e.Body)
+}
+
+func isEndpointUnsupported(err error) bool {
+	var statusErr *embedStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.StatusCode == http.StatusNotFound || statusErr.StatusCode == http.StatusMethodNotAllowed
 }
 
 func isRetryableEmbeddingError(err error) bool {

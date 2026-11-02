@@ -181,6 +181,7 @@ type SearchResult struct {
 type SearchResponse struct {
 	Query   string         `json:"query"`
 	Results []SearchResult `json:"results"`
+	Store   *StoreStatus   `json:"store,omitempty"`
 }
 
 type ContextPackRequest struct {
@@ -195,6 +196,7 @@ type ContextPackRequest struct {
 type ContextPackResponse struct {
 	Query      string         `json:"query"`
 	MemoryPack []SearchResult `json:"memory_pack"`
+	Store      *StoreStatus   `json:"store,omitempty"`
 }
 
 type IngestChatRequest struct {
@@ -206,8 +208,10 @@ type IngestChatRequest struct {
 }
 
 type IngestChatResponse struct {
-	InsertedCount int      `json:"inserted_count"`
-	MemoryIDs     []string `json:"memory_ids"`
+	InsertedCount int          `json:"inserted_count"`
+	MemoryIDs     []string     `json:"memory_ids"`
+	Persisted     bool         `json:"persisted"`
+	Store         *StoreStatus `json:"store,omitempty"`
 }
 
 type MemoryStats struct {
@@ -216,6 +220,7 @@ type MemoryStats struct {
 	BySpeaker map[string]int `json:"by_speaker,omitempty"`
 	ByProject map[string]int `json:"by_project,omitempty"`
 	TopTitles []string       `json:"top_titles,omitempty"`
+	Store     *StoreStatus   `json:"store,omitempty"`
 }
 
 type SessionRequest struct {

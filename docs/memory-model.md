@@ -28,6 +28,15 @@ FrontPocket stores memory points with:
 - Session state can be saved/loaded through `POST /memory/session` and cleared through `DELETE /memory/session`.
 - Aggregate memory totals are exposed through `GET /memory/stats`, using Qdrant collection info/count APIs and cached distinct-field aggregation so large collections do not require full scans per request.
 - Collection vector size is validated against embedding output dimensions.
+- Filter payload indexes (`project`, `memory_kind`, `speaker`, `source_type`, `conversation_id`, `ai_provider`, `ai_model`, `feedback_rating`, `attachment_source_system`, `tags`, `status`, `user_starred`, `user_shared`, `canonical`, `timestamp`) are created on first use of a collection and re-created idempotently on existing collections, so filtered search, browse, and stats avoid full scans.
+
+## Store failure and degraded reads
+
+- Ingest returns `503` with code `INGEST_FAILED` when points could not be persisted; the detail carries the store error. It never reports success for data that was not written.
+- Search, browse, stats, context-pack, and MindDrill search return `503` when the store cannot answer, instead of an empty result set that reads as "no memory".
+- A dimension mismatch is a configuration error and stays `500`.
+- The in-memory fallback store is off by default (`FRONTPOCKET_ALLOW_MEMORY_FALLBACK=false`). When enabled, fallback writes and reads still succeed, but responses carry `"store": {"degraded": true, "reason": "..."}` and ingest also reports `"persisted": false`.
+
 
 ## Reflection readiness behavior
 

@@ -14,6 +14,7 @@ import (
 )
 
 func TestIngestAndSearchFlow(t *testing.T) {
+	qdrantURL, redisURL := requireLiveStores(t)
 	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/embed" {
 			http.NotFound(w, r)
@@ -46,8 +47,8 @@ func TestIngestAndSearchFlow(t *testing.T) {
 		Security: config.SecurityConfig{
 			RequireAPIKey: false,
 		},
-		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Qdrant: config.QdrantConfig{URL: qdrantURL, Collection: testCollectionName(t, qdrantURL, "frontpocket_test")},
+		Redis:  config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding: config.EmbeddingConfig{
 			Provider:      "ollama",
 			OllamaModel:   "nomic-embed-text",

@@ -15,6 +15,7 @@ import (
 
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/memoryloop"
+	"github.com/meistro57/frontpocket/internal/store"
 )
 
 func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
@@ -62,9 +63,10 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 		ingestor.Project = req.Project
 	}
 
-	ingestResult, err := ingestor.Ingest(r.Context(), records)
+	ingestCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	ingestResult, err := ingestor.Ingest(ingestCtx, records)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "INGEST_FAILED",
 			Message: "Could not ingest memory records.",
 			Detail:  err.Error(),
@@ -80,6 +82,8 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, memory.IngestChatResponse{
 		InsertedCount: len(ingestResult.Points),
 		MemoryIDs:     ids,
+		Persisted:     memory.DegradedStatus(storeStatus) == nil,
+		Store:         memory.DegradedStatus(storeStatus),
 	})
 }
 
@@ -104,6 +108,8 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampLimit(req.Limit)
+	storeCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	r = r.WithContext(storeCtx)
 	if !req.IncludeProposed {
 		if cached, ok := s.getCachedSearchResults(r, req); ok {
 			writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: cached})
@@ -113,7 +119,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 
 	results, err := s.searchWithCanonOptions(r, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "SEARCH_FAILED",
 			Message: "Search failed.",
 			Detail:  err.Error(),
@@ -125,7 +131,11 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	if !req.IncludeProposed {
 		s.setCachedSearchResults(r, req, results)
 	}
-	writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: results})
+	writeJSON(w, http.StatusOK, memory.SearchResponse{
+		Query:   req.Query,
+		Results: results,
+		Store:   memory.DegradedStatus(storeStatus),
+	})
 }
 
 func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +159,8 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampContextLimit(req.Limit)
+	storeCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	r = r.WithContext(storeCtx)
 	results, err := s.searchWithCanonOptions(r, memory.SearchRequest{
 		Query:           req.Query,
 		Limit:           req.Limit,
@@ -158,7 +170,7 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 		CanonicalFirst:  req.CanonicalFirst,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "CONTEXT_PACK_FAILED",
 			Message: "Context pack generation failed.",
 			Detail:  err.Error(),
@@ -166,7 +178,11 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := memory.ContextPackResponse{Query: req.Query, MemoryPack: s.filterResults(results)}
+	resp := memory.ContextPackResponse{
+		Query:      req.Query,
+		MemoryPack: s.filterResults(results),
+		Store:      memory.DegradedStatus(storeStatus),
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -301,6 +317,7 @@ func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
 	// Bound stats lookups so a slow backend cannot hold this request open indefinitely.
 	statsCtx, cancel := context.WithTimeout(r.Context(), s.statsQueryTimeout)
 	defer cancel()
+	statsCtx, storeStatus := memory.WithStoreStatus(statsCtx)
 	stats, err := s.memoryStore.Stats(statsCtx, filters)
 	if err != nil {
 		if staleStats, ok := s.getStaleMemoryStats(cacheKey); ok {
@@ -315,7 +332,7 @@ func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "STATS_FAILED",
 			Message: "Memory stats lookup failed.",
 			Detail:  err.Error(),
@@ -325,6 +342,7 @@ func (s *Server) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
 	if s.statsCacheTTL > 0 {
 		s.setCachedMemoryStats(cacheKey, stats)
 	}
+	stats.Store = memory.DegradedStatus(storeStatus)
 	writeJSON(w, http.StatusOK, stats)
 }
 
@@ -350,8 +368,9 @@ func (s *Server) handleMemoryBrowse(w http.ResponseWriter, r *http.Request) {
 	since := parseTimeQuery(query.Get("since"))
 	until := parseTimeQuery(query.Get("until"))
 
+	browseCtx, storeStatus := memory.WithStoreStatus(r.Context())
 	items, nextOffset, err := rawSource.ScrollRaw(
-		r.Context(),
+		browseCtx,
 		limit,
 		offset,
 		statsFiltersFromQuery(r),
@@ -360,7 +379,7 @@ func (s *Server) handleMemoryBrowse(w http.ResponseWriter, r *http.Request) {
 		includeCanonical,
 	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "BROWSE_FAILED",
 			Message: "Memory browse failed.",
 			Detail:  err.Error(),
@@ -368,10 +387,14 @@ func (s *Server) handleMemoryBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"items":       items,
 		"next_offset": nextOffset,
-	})
+	}
+	if degraded := memory.DegradedStatus(storeStatus); degraded != nil {
+		response["store"] = degraded
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
@@ -749,4 +772,14 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, body memory.ErrorBody) {
 	writeJSON(w, status, memory.ErrorEnvelope{Error: body})
+}
+
+// statusForStoreError keeps configuration problems (a dimension mismatch the
+// operator must fix) distinct from a store that simply cannot answer right now.
+func statusForStoreError(err error) int {
+	var mismatch *store.DimensionMismatchError
+	if errors.As(err, &mismatch) {
+		return http.StatusInternalServerError
+	}
+	return http.StatusServiceUnavailable
 }

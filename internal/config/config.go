@@ -28,10 +28,11 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Mode      string
-	Host      string
-	Port      int
-	PublicURL string
+	Mode                string
+	Host                string
+	Port                int
+	PublicURL           string
+	AllowMemoryFallback bool
 }
 
 type SecurityConfig struct {
@@ -156,10 +157,11 @@ type ToolsConfig struct {
 func Load() (Config, error) {
 	cfg := Config{
 		App: AppConfig{
-			Mode:      getEnv("FRONTPOCKET_MODE", "local"),
-			Host:      getEnv("FRONTPOCKET_HOST", "0.0.0.0"),
-			Port:      getEnvInt("FRONTPOCKET_PORT", 8088),
-			PublicURL: getEnv("FRONTPOCKET_PUBLIC_URL", "http://localhost:8088"),
+			Mode:                getEnv("FRONTPOCKET_MODE", "local"),
+			Host:                getEnv("FRONTPOCKET_HOST", "0.0.0.0"),
+			Port:                getEnvInt("FRONTPOCKET_PORT", 8088),
+			PublicURL:           getEnv("FRONTPOCKET_PUBLIC_URL", "http://localhost:8088"),
+			AllowMemoryFallback: getEnvBool("FRONTPOCKET_ALLOW_MEMORY_FALLBACK", false),
 		},
 		Security: SecurityConfig{
 			RequireAPIKey: getEnvBool("FRONTPOCKET_REQUIRE_API_KEY", false),

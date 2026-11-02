@@ -15,6 +15,7 @@ import (
 )
 
 func TestMemoryChatResponseShapeAndMindDrillWriteMetadata(t *testing.T) {
+	qdrantURL, redisURL := requireLiveStores(t)
 	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/embed" {
 			http.NotFound(w, r)
@@ -44,8 +45,8 @@ func TestMemoryChatResponseShapeAndMindDrillWriteMetadata(t *testing.T) {
 
 	cfg := config.Config{
 		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088, PublicURL: "http://localhost:8088"},
-		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Qdrant: config.QdrantConfig{URL: qdrantURL, Collection: testCollectionName(t, qdrantURL, "frontpocket_test")},
+		Redis:  config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding: config.EmbeddingConfig{
 			Provider:      "ollama",
 			OllamaModel:   "nomic-embed-text",
@@ -54,7 +55,7 @@ func TestMemoryChatResponseShapeAndMindDrillWriteMetadata(t *testing.T) {
 		},
 		Chat: config.ChatConfig{Provider: "none"},
 		MindDrillMemory: config.MindDrillMemoryConfig{
-			Collection:          "minddrill_chat_memory",
+			Collection:          testCollectionName(t, qdrantURL, "minddrill_chat_memory"),
 			Enabled:             true,
 			WriteMode:           "summary",
 			TopK:                6,
@@ -167,6 +168,7 @@ func TestMemoryChatResponseShapeAndMindDrillWriteMetadata(t *testing.T) {
 }
 
 func TestMindDrillChatSessionDeleteRouteAvailableWithoutDebugEndpoints(t *testing.T) {
+	qdrantURL, redisURL := requireLiveStores(t)
 	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/embed" {
 			http.NotFound(w, r)
@@ -178,8 +180,8 @@ func TestMindDrillChatSessionDeleteRouteAvailableWithoutDebugEndpoints(t *testin
 
 	cfg := config.Config{
 		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088, PublicURL: "http://localhost:8088"},
-		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Qdrant: config.QdrantConfig{URL: qdrantURL, Collection: testCollectionName(t, qdrantURL, "frontpocket_test")},
+		Redis:  config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding: config.EmbeddingConfig{
 			Provider:      "ollama",
 			OllamaModel:   "nomic-embed-text",
@@ -188,7 +190,7 @@ func TestMindDrillChatSessionDeleteRouteAvailableWithoutDebugEndpoints(t *testin
 		},
 		Chat: config.ChatConfig{Provider: "none"},
 		MindDrillMemory: config.MindDrillMemoryConfig{
-			Collection:          "minddrill_chat_memory",
+			Collection:          testCollectionName(t, qdrantURL, "minddrill_chat_memory"),
 			Enabled:             false,
 			WriteMode:           "summary",
 			TopK:                6,
@@ -249,6 +251,7 @@ func stringsValue(v any) string {
 }
 
 func TestMemoryChatUsesOpenRouterGemmaForAnswer(t *testing.T) {
+	qdrantURL, redisURL := requireLiveStores(t)
 	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/embed" {
 			http.NotFound(w, r)
@@ -304,8 +307,8 @@ func TestMemoryChatUsesOpenRouterGemmaForAnswer(t *testing.T) {
 
 	cfg := config.Config{
 		App:    config.AppConfig{Host: "127.0.0.1", Port: 8088, PublicURL: "http://localhost:8088"},
-		Qdrant: config.QdrantConfig{URL: "http://127.0.0.1:63331", Collection: "frontpocket_test"},
-		Redis:  config.RedisConfig{URL: "redis://127.0.0.1:6391/0", KeyPrefix: "frontpocket-test"},
+		Qdrant: config.QdrantConfig{URL: qdrantURL, Collection: testCollectionName(t, qdrantURL, "frontpocket_test")},
+		Redis:  config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding: config.EmbeddingConfig{
 			Provider:       "ollama",
 			OllamaModel:    "nomic-embed-text",
@@ -318,7 +321,7 @@ func TestMemoryChatUsesOpenRouterGemmaForAnswer(t *testing.T) {
 		},
 		Chat: config.ChatConfig{Provider: "openrouter", OpenRouterModel: "google/gemma-4-31b-it"},
 		MindDrillMemory: config.MindDrillMemoryConfig{
-			Collection:          "minddrill_chat_memory",
+			Collection:          testCollectionName(t, qdrantURL, "minddrill_chat_memory"),
 			Enabled:             false,
 			WriteMode:           "summary",
 			TopK:                6,

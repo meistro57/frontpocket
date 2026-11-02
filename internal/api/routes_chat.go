@@ -82,7 +82,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	}
 	frontResults, err := s.memoryStore.Search(ctx, frontReq)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "CHAT_FRONTPOCKET_SEARCH_FAILED",
 			Message: "FrontPocket memory search failed.",
 			Detail:  err.Error(),
@@ -102,7 +102,7 @@ func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 		}
 		mindResults, err = s.mindDrillStore.Search(ctx, mindReq)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+			writeError(w, statusForStoreError(err), memory.ErrorBody{
 				Code:    "CHAT_MINDDRILL_SEARCH_FAILED",
 				Message: "MindDrill memory search failed.",
 				Detail:  err.Error(),
@@ -355,15 +355,17 @@ func (s *Server) generateChatAnswer(ctx context.Context, message, systemPrompt, 
 }
 
 func (s *Server) handleMindDrillMemoryStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.mindDrillStore.Stats(r.Context(), statsFiltersFromQuery(r))
+	statsCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	stats, err := s.mindDrillStore.Stats(statsCtx, statsFiltersFromQuery(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "MINDDRILL_STATS_FAILED",
 			Message: "MindDrill memory stats lookup failed.",
 			Detail:  err.Error(),
 		})
 		return
 	}
+	stats.Store = memory.DegradedStatus(storeStatus)
 	writeJSON(w, http.StatusOK, stats)
 }
 
@@ -388,9 +390,10 @@ func (s *Server) handleMindDrillMemorySearch(w http.ResponseWriter, r *http.Requ
 	}
 	req.Limit = s.clampLimit(req.Limit)
 
-	results, err := s.mindDrillStore.Search(r.Context(), req)
+	searchCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	results, err := s.mindDrillStore.Search(searchCtx, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
 			Code:    "MINDDRILL_SEARCH_FAILED",
 			Message: "MindDrill search failed.",
 			Detail:  err.Error(),
@@ -399,7 +402,11 @@ func (s *Server) handleMindDrillMemorySearch(w http.ResponseWriter, r *http.Requ
 	}
 
 	results = s.filterResults(results)
-	writeJSON(w, http.StatusOK, memory.SearchResponse{Query: req.Query, Results: results})
+	writeJSON(w, http.StatusOK, memory.SearchResponse{
+		Query:   req.Query,
+		Results: results,
+		Store:   memory.DegradedStatus(storeStatus),
+	})
 }
 
 func (s *Server) handleMemoryChatSessionDelete(w http.ResponseWriter, r *http.Request) {

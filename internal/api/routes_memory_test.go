@@ -115,13 +115,23 @@ type stubMemoryStore struct {
 	stats             memory.MemoryStats
 	calls             int
 	delayUntilCtxDone bool
+	searchErr         error
+	statsErr          error
+	degradedResults   []memory.SearchResult
 }
 
 func (s *stubMemoryStore) Upsert(context.Context, []memory.MemoryPoint) error {
 	return nil
 }
 
-func (s *stubMemoryStore) Search(context.Context, memory.SearchRequest) ([]memory.SearchResult, error) {
+func (s *stubMemoryStore) Search(ctx context.Context, _ memory.SearchRequest) ([]memory.SearchResult, error) {
+	if s.degradedResults != nil {
+		memory.MarkStoreDegraded(ctx, context.DeadlineExceeded)
+		return s.degradedResults, nil
+	}
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
 	return nil, nil
 }
 
@@ -130,6 +140,9 @@ func (s *stubMemoryStore) Stats(ctx context.Context, _ memory.SearchFilters) (me
 	if s.delayUntilCtxDone {
 		<-ctx.Done()
 		return memory.MemoryStats{}, ctx.Err()
+	}
+	if s.statsErr != nil {
+		return memory.MemoryStats{}, s.statsErr
 	}
 	return s.stats, nil
 }
