@@ -705,8 +705,8 @@ INCLUDE_FULL_TEXT=true
 CONTEXT_PACK_DEFAULT_LIMIT=8
 CONTEXT_PACK_MAX_LIMIT=20
 
-# Requires CHAT_PROVIDER not to be none.
-CONTEXT_PACK_USE_SUMMARIZER=false
+# Ceiling for the per-request character budget.
+CONTEXT_PACK_MAX_CHARACTERS=6000
 
 
 # ============================================================

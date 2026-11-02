@@ -20,12 +20,7 @@ import (
 
 func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 	var req memory.IngestChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -89,12 +84,7 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	var req memory.SearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -108,6 +98,16 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Limit = s.clampLimit(req.Limit)
+	if req.MinScore < 0 || req.MinScore > 1 {
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "VALIDATION_ERROR",
+			Message: "min_score must be between 0 and 1.",
+		})
+		return
+	}
+	if req.MinScore < s.minSearchScore {
+		req.MinScore = s.minSearchScore
+	}
 	storeCtx, storeStatus := memory.WithStoreStatus(r.Context())
 	r = r.WithContext(storeCtx)
 	if !req.IncludeProposed {
@@ -127,7 +127,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results = s.filterResults(results)
+	results = s.filterResultsWithFloor(results, req.MinScore)
 	if !req.IncludeProposed {
 		s.setCachedSearchResults(r, req, results)
 	}
@@ -140,12 +140,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 	var req memory.ContextPackRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -158,16 +153,42 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	order := strings.ToLower(strings.TrimSpace(req.Order))
+	switch order {
+	case "", memory.ContextPackOrderRelevance, memory.ContextPackOrderChronological:
+	default:
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "VALIDATION_ERROR",
+			Message: "order must be relevance or chronological.",
+		})
+		return
+	}
+	if req.MinScore < 0 || req.MinScore > 1 {
+		writeError(w, http.StatusBadRequest, memory.ErrorBody{
+			Code:    "VALIDATION_ERROR",
+			Message: "min_score must be between 0 and 1.",
+		})
+		return
+	}
+	if req.MinScore < s.minSearchScore {
+		req.MinScore = s.minSearchScore
+	}
+
 	req.Limit = s.clampContextLimit(req.Limit)
+	req.MaxCharacters = s.clampContextCharacters(req.MaxCharacters)
 	storeCtx, storeStatus := memory.WithStoreStatus(r.Context())
 	r = r.WithContext(storeCtx)
 	results, err := s.searchWithCanonOptions(r, memory.SearchRequest{
-		Query:           req.Query,
-		Limit:           req.Limit,
-		Filters:         req.Filters,
-		IncludeProposed: req.IncludeProposed,
-		IncludeRejected: req.IncludeRejected,
-		CanonicalFirst:  req.CanonicalFirst,
+		Query:              req.Query,
+		Limit:              req.Limit,
+		Filters:            req.Filters,
+		IncludeProposed:    req.IncludeProposed,
+		IncludeRejected:    req.IncludeRejected,
+		CanonicalFirst:     req.CanonicalFirst,
+		Hybrid:             req.Hybrid,
+		Dedupe:             req.Dedupe,
+		MinScore:           req.MinScore,
+		MaxPerConversation: req.MaxPerConversation,
 	})
 	if err != nil {
 		writeError(w, statusForStoreError(err), memory.ErrorBody{
@@ -178,11 +199,12 @@ func (s *Server) handleContextPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := memory.ContextPackResponse{
-		Query:      req.Query,
-		MemoryPack: s.filterResults(results),
-		Store:      memory.DegradedStatus(storeStatus),
-	}
+	resp := memory.AssembleContextPack(req.Query, s.filterResultsWithFloor(results, req.MinScore), memory.ContextPackOptions{
+		MaxCharacters: req.MaxCharacters,
+		QuoteOnly:     req.QuoteOnly,
+		Chronological: order == memory.ContextPackOrderChronological,
+	})
+	resp.Store = memory.DegradedStatus(storeStatus)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -399,12 +421,7 @@ func (s *Server) handleMemoryBrowse(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 	var req memory.SessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -573,6 +590,18 @@ func (s *Server) clampLimit(limit int) int {
 	return limit
 }
 
+// clampContextCharacters keeps a requested pack budget within the configured
+// ceiling so a client cannot ask for an unbounded pack.
+func (s *Server) clampContextCharacters(requested int) int {
+	if requested <= 0 {
+		return s.cfg.ContextPack.MaxCharacters
+	}
+	if s.cfg.ContextPack.MaxCharacters > 0 && requested > s.cfg.ContextPack.MaxCharacters {
+		return s.cfg.ContextPack.MaxCharacters
+	}
+	return requested
+}
+
 func (s *Server) clampContextLimit(limit int) int {
 	if limit <= 0 {
 		return s.cfg.ContextPack.DefaultLimit
@@ -584,9 +613,13 @@ func (s *Server) clampContextLimit(limit int) int {
 }
 
 func (s *Server) filterResults(results []memory.SearchResult) []memory.SearchResult {
+	return s.filterResultsWithFloor(results, s.minSearchScore)
+}
+
+func (s *Server) filterResultsWithFloor(results []memory.SearchResult, minScore float64) []memory.SearchResult {
 	filtered := make([]memory.SearchResult, 0, len(results))
 	for _, result := range results {
-		if result.Score < s.minSearchScore {
+		if result.Score < minScore {
 			continue
 		}
 		if !s.cfg.Search.IncludeSourceQuote {

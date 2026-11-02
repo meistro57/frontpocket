@@ -1,0 +1,24 @@
+# Binaries for programs and modules
+*.exe
+*.exe-
+*.dll
+*.so
+*.dylib
+
+# Test binary built for `go test`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (vendor/)
+/vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Custom binaries
+/smoketest
+/cmd/smoketest/smoketest
+*.bin

@@ -23,6 +23,7 @@ import (
 
 	"github.com/meistro57/frontpocket/internal/embed"
 	"github.com/meistro57/frontpocket/internal/memory"
+	"github.com/meistro57/frontpocket/internal/metrics"
 )
 
 var qdrantWriteRetryDelays = []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
@@ -331,6 +332,15 @@ type QdrantMemoryStore struct {
 	unfilteredAggCacheByColl map[string]unfilteredAggregationCacheEntry
 	indexMu                  sync.Mutex
 	indexedCollections       map[string]bool
+	embedCacheMu             sync.Mutex
+	embedCache               map[string]embeddingCacheEntry
+	embedCacheTTL            time.Duration
+	embedCacheMax            int
+}
+
+type embeddingCacheEntry struct {
+	vector    []float32
+	expiresAt time.Time
 }
 
 type distinctFieldCacheEntry struct {
@@ -362,6 +372,9 @@ func NewQdrantMemoryStore(client *QdrantClient, embedder embed.Embedder, collect
 		distinctFieldVals:        make(map[string]distinctFieldCacheEntry),
 		unfilteredAggCacheByColl: make(map[string]unfilteredAggregationCacheEntry),
 		indexedCollections:       make(map[string]bool),
+		embedCache:               make(map[string]embeddingCacheEntry),
+		embedCacheTTL:            5 * time.Minute,
+		embedCacheMax:            512,
 	}
 }
 
@@ -689,7 +702,12 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 		limit = 5
 	}
 
-	vector, err := s.embedder.EmbedText(ctx, query)
+	started := time.Now()
+	defer func() {
+		metrics.Default().Observe("frontpocket_search_duration_seconds", time.Since(started).Seconds())
+	}()
+
+	vector, err := s.queryEmbedding(ctx, query)
 	if err != nil {
 		if s.fallback != nil {
 			memory.MarkStoreDegraded(ctx, err)
@@ -715,7 +733,7 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 
 	body := map[string]any{
 		"vector":       searchVector,
-		"limit":        limit,
+		"limit":        candidateLimit(req, limit),
 		"with_payload": true,
 		"with_vector":  false,
 	}
@@ -752,7 +770,117 @@ func (s *QdrantMemoryStore) Search(ctx context.Context, req memory.SearchRequest
 		memory.MarkStoreDegraded(ctx, nil)
 		return s.fallback.Search(ctx, req)
 	}
-	return results, nil
+	return refineSearchResults(req, results, limit), nil
+}
+
+// queryEmbedding returns the embedding for a query, reusing a recent one when
+// the same text was searched moments ago. Embedding calls are the slowest part
+// of retrieval, and agents tend to repeat identical queries.
+func (s *QdrantMemoryStore) queryEmbedding(ctx context.Context, query string) ([]float32, error) {
+	if s.embedder == nil {
+		return nil, fmt.Errorf("embedder is not configured")
+	}
+
+	key := s.embeddingCacheKey(query)
+	if cached, ok := s.cachedEmbedding(key); ok {
+		metrics.Default().Inc("frontpocket_embedding_cache_hits_total", nil)
+		return cached, nil
+	}
+	metrics.Default().Inc("frontpocket_embedding_cache_misses_total", nil)
+
+	vector, err := s.embedder.EmbedText(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	s.storeEmbedding(key, vector)
+	return vector, nil
+}
+
+func (s *QdrantMemoryStore) embeddingCacheKey(query string) string {
+	provider, model := "", ""
+	if s.embedder != nil {
+		provider = s.embedder.ProviderName()
+		model = s.embedder.ModelName()
+	}
+	normalised := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(query))), " ")
+	return provider + "|" + model + "|" + normalised
+}
+
+func (s *QdrantMemoryStore) cachedEmbedding(key string) ([]float32, bool) {
+	if s.embedCacheTTL <= 0 || s.embedCacheMax <= 0 {
+		return nil, false
+	}
+	now := time.Now()
+	s.embedCacheMu.Lock()
+	defer s.embedCacheMu.Unlock()
+
+	entry, ok := s.embedCache[key]
+	if !ok {
+		return nil, false
+	}
+	if now.After(entry.expiresAt) {
+		delete(s.embedCache, key)
+		return nil, false
+	}
+	return entry.vector, true
+}
+
+func (s *QdrantMemoryStore) storeEmbedding(key string, vector []float32) {
+	if s.embedCacheTTL <= 0 || s.embedCacheMax <= 0 {
+		return
+	}
+	now := time.Now()
+	s.embedCacheMu.Lock()
+	defer s.embedCacheMu.Unlock()
+
+	if len(s.embedCache) >= s.embedCacheMax {
+		for cacheKey, entry := range s.embedCache {
+			if now.After(entry.expiresAt) {
+				delete(s.embedCache, cacheKey)
+			}
+		}
+		if len(s.embedCache) >= s.embedCacheMax {
+			for cacheKey := range s.embedCache {
+				delete(s.embedCache, cacheKey)
+				break
+			}
+		}
+	}
+	s.embedCache[key] = embeddingCacheEntry{vector: vector, expiresAt: now.Add(s.embedCacheTTL)}
+}
+
+// candidateLimit widens the dense candidate pool when re-ranking is requested,
+// because hybrid fusion and deduplication can only reorder what was fetched.
+func candidateLimit(req memory.SearchRequest, limit int) int {
+	if !req.Hybrid && !req.Dedupe && req.MaxPerConversation <= 0 {
+		return limit
+	}
+	expanded := limit * 4
+	if expanded < 40 {
+		expanded = 40
+	}
+	if expanded > 200 {
+		expanded = 200
+	}
+	return expanded
+}
+
+// refineSearchResults applies the optional post-retrieval stages: hybrid
+// re-ranking, duplicate collapsing, per-conversation caps, and a score floor.
+func refineSearchResults(req memory.SearchRequest, results []memory.SearchResult, limit int) []memory.SearchResult {
+	if req.Hybrid {
+		results = memory.FuseHybridResults(req.Query, results, limit)
+	}
+	if req.Dedupe || req.MaxPerConversation > 0 {
+		results = memory.DedupeResults(results, req.MaxPerConversation)
+	}
+	if req.MinScore > 0 {
+		results = memory.ApplyMinScore(results, req.MinScore)
+	}
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	return results
 }
 
 func (s *QdrantMemoryStore) Stats(ctx context.Context, filters memory.SearchFilters) (memory.MemoryStats, error) {
@@ -1513,6 +1641,7 @@ func toQdrantFilter(filters memory.SearchFilters) map[string]any {
 	appendMatch("feedback_rating", filters.FeedbackRating)
 	appendBoolMatch("user_starred", filters.UserStarred)
 	appendBoolMatch("user_shared", filters.UserShared)
+	appendBoolMatch("pinned", filters.Pinned)
 	if filters.HasAttachment != nil {
 		emptyAttachment := map[string]any{
 			"key": "attachment_source_system",
@@ -1589,6 +1718,13 @@ func toQdrantPayload(point memory.MemoryPoint) map[string]any {
 		"merge_target_id":          point.MergeTargetID,
 		"ai_provider":              point.AIProvider,
 		"ai_model":                 point.AIModel,
+		"pinned":                   point.Pinned,
+		"pinned_at":                point.PinnedAt,
+		"pinned_by":                point.PinnedBy,
+		"corrected_at":             point.CorrectedAt,
+		"corrected_by":             point.CorrectedBy,
+		"deleted_at":               point.DeletedAt,
+		"deleted_by":               point.DeletedBy,
 	}
 	if point.ReviewedAt != nil && !point.ReviewedAt.IsZero() {
 		payload["reviewed_at"] = point.ReviewedAt.Format(time.RFC3339)
@@ -1630,6 +1766,8 @@ func fromQdrantPayload(payload map[string]any, score float64) memory.SearchResul
 		DateBasis:           asString(payload["date_basis"]),
 		AIProvider:          asString(payload["ai_provider"]),
 		AIModel:             asString(payload["ai_model"]),
+		Pinned:              asBool(payload["pinned"]),
+		PinnedAt:            asString(payload["pinned_at"]),
 	}
 }
 

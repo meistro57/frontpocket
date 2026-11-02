@@ -21,6 +21,7 @@ type Config struct {
 	Chunking        ChunkingConfig
 	Ingestion       IngestionConfig
 	Search          SearchConfig
+	Limits          LimitsConfig
 	ContextPack     ContextPackConfig
 	Logging         LoggingConfig
 	Dev             DevConfig
@@ -36,9 +37,17 @@ type AppConfig struct {
 }
 
 type SecurityConfig struct {
-	RequireAPIKey bool
-	APIKey        string
-	APIKeyHeader  string
+	RequireAPIKey        bool
+	APIKey               string
+	APIKeyHeader         string
+	EnableAdminEndpoints bool
+	MutationLogPath      string
+}
+
+type LimitsConfig struct {
+	MaxRequestBodyBytes int64
+	RateLimitPerMinute  int
+	RateLimitBurst      int
 }
 
 type QdrantConfig struct {
@@ -125,7 +134,7 @@ type SearchConfig struct {
 type ContextPackConfig struct {
 	DefaultLimit  int
 	MaxLimit      int
-	UseSummarizer bool
+	MaxCharacters int
 }
 
 type LoggingConfig struct {
@@ -164,9 +173,16 @@ func Load() (Config, error) {
 			AllowMemoryFallback: getEnvBool("FRONTPOCKET_ALLOW_MEMORY_FALLBACK", false),
 		},
 		Security: SecurityConfig{
-			RequireAPIKey: getEnvBool("FRONTPOCKET_REQUIRE_API_KEY", false),
-			APIKey:        getEnv("FRONTPOCKET_API_KEY", "change-me"),
-			APIKeyHeader:  getEnv("FRONTPOCKET_API_KEY_HEADER", "X-FrontPocket-Key"),
+			RequireAPIKey:        getEnvBool("FRONTPOCKET_REQUIRE_API_KEY", false),
+			APIKey:               getEnv("FRONTPOCKET_API_KEY", "change-me"),
+			APIKeyHeader:         getEnv("FRONTPOCKET_API_KEY_HEADER", "X-FrontPocket-Key"),
+			EnableAdminEndpoints: getEnvBool("ENABLE_ADMIN_ENDPOINTS", getEnv("FRONTPOCKET_MODE", "local") == "local"),
+			MutationLogPath:      getEnv("FRONTPOCKET_MEMORY_MUTATION_LOG", "data/memory_mutations.jsonl"),
+		},
+		Limits: LimitsConfig{
+			MaxRequestBodyBytes: getEnvInt64("MAX_REQUEST_BODY_BYTES", 8<<20),
+			RateLimitPerMinute:  getEnvInt("RATE_LIMIT_PER_MINUTE", 0),
+			RateLimitBurst:      getEnvInt("RATE_LIMIT_BURST", 20),
 		},
 		Qdrant: QdrantConfig{
 			URL:        getEnv("QDRANT_URL", "http://localhost:6333"),
@@ -237,7 +253,7 @@ func Load() (Config, error) {
 		ContextPack: ContextPackConfig{
 			DefaultLimit:  getEnvInt("CONTEXT_PACK_DEFAULT_LIMIT", 8),
 			MaxLimit:      getEnvInt("CONTEXT_PACK_MAX_LIMIT", 20),
-			UseSummarizer: getEnvBool("CONTEXT_PACK_USE_SUMMARIZER", false),
+			MaxCharacters: getEnvInt("CONTEXT_PACK_MAX_CHARACTERS", 6000),
 		},
 		Logging: LoggingConfig{
 			Level:        strings.ToLower(getEnv("LOG_LEVEL", "info")),
@@ -266,6 +282,15 @@ func Load() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.Limits.MaxRequestBodyBytes <= 0 {
+		return errors.New("MAX_REQUEST_BODY_BYTES must be greater than 0")
+	}
+	if c.Limits.RateLimitPerMinute < 0 {
+		return errors.New("RATE_LIMIT_PER_MINUTE cannot be negative")
+	}
+	if c.Limits.RateLimitBurst <= 0 {
+		return errors.New("RATE_LIMIT_BURST must be greater than 0")
+	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		return fmt.Errorf("FRONTPOCKET_PORT must be between 1 and 65535")
 	}
@@ -302,8 +327,8 @@ func (c Config) Validate() error {
 	if c.Security.RequireAPIKey && strings.TrimSpace(c.Security.APIKey) == "" {
 		return errors.New("FRONTPOCKET_API_KEY is required when FRONTPOCKET_REQUIRE_API_KEY=true")
 	}
-	if c.ContextPack.UseSummarizer && c.Chat.Provider == "none" {
-		return errors.New("CHAT_PROVIDER cannot be none when CONTEXT_PACK_USE_SUMMARIZER=true")
+	if c.ContextPack.MaxCharacters <= 0 {
+		return errors.New("CONTEXT_PACK_MAX_CHARACTERS must be greater than 0")
 	}
 	if c.MindDrillMemory.Enabled && strings.TrimSpace(c.MindDrillMemory.Collection) == "" {
 		return errors.New("MINDDRILL_MEMORY_COLLECTION is required when MINDDRILL_MEMORY_ENABLED=true")
@@ -390,6 +415,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return fallback
 	}

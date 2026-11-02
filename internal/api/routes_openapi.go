@@ -235,6 +235,94 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+			"/memory/pin": map[string]any{
+				"post": map[string]any{
+					"operationId": "pinMemory",
+					"summary":     "Pin or unpin memories",
+					"description": "Marks memories for retention. Requires ENABLE_ADMIN_ENDPOINTS=true.",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/PinRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Pin state applied."},
+						"400": map[string]any{"$ref": "#/components/responses/ValidationError"},
+						"403": map[string]any{"description": "Mutation endpoints are disabled."},
+					},
+				},
+			},
+			"/memory/correct": map[string]any{
+				"post": map[string]any{
+					"operationId": "correctMemory",
+					"summary":     "Correct a memory record",
+					"description": "Rewrites user-visible fields while keeping the original source material. Requires ENABLE_ADMIN_ENDPOINTS=true.",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/CorrectRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Correction applied."},
+						"400": map[string]any{"$ref": "#/components/responses/ValidationError"},
+						"403": map[string]any{"description": "Mutation endpoints are disabled."},
+					},
+				},
+			},
+			"/memory/forget": map[string]any{
+				"delete": map[string]any{
+					"operationId": "forgetMemory",
+					"summary":     "Forget memories",
+					"description": "Soft-deletes memories by default; hard=true removes the points. Requires ENABLE_ADMIN_ENDPOINTS=true.",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/ForgetRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Memories forgotten."},
+						"400": map[string]any{"$ref": "#/components/responses/ValidationError"},
+						"403": map[string]any{"description": "Mutation endpoints are disabled."},
+					},
+				},
+			},
+			"/memory/export": map[string]any{
+				"get": map[string]any{
+					"operationId": "exportMemory",
+					"summary":     "Export memories as JSONL",
+					"description": "Streams matching memory points as newline-delimited JSON. Requires ENABLE_ADMIN_ENDPOINTS=true.",
+					"parameters": []map[string]any{
+						{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 2000}},
+						{"name": "offset", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "project", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "memory_kind", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "since", "in": "query", "schema": map[string]any{"type": "string", "format": "date-time"}},
+						{"name": "until", "in": "query", "schema": map[string]any{"type": "string", "format": "date-time"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Newline-delimited JSON memory records."},
+						"403": map[string]any{"description": "Mutation endpoints are disabled."},
+					},
+				},
+			},
+			"/metrics": map[string]any{
+				"get": map[string]any{
+					"operationId": "getMetrics",
+					"summary":     "Prometheus metrics",
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Prometheus text exposition."},
+					},
+				},
+			},
 			"/memory/chat": map[string]any{
 				"post": map[string]any{
 					"operationId": "chatWithMemory",
@@ -580,6 +668,27 @@ func (s *Server) openAPISpec() map[string]any {
 							"description": "Result limit.",
 						},
 						"filters": map[string]any{"$ref": "#/components/schemas/SearchFilters"},
+						"hybrid": map[string]any{
+							"type":        "boolean",
+							"description": "Blend dense similarity with lexical overlap so exact names, quotes, and code symbols surface.",
+						},
+						"dedupe": map[string]any{
+							"type":        "boolean",
+							"description": "Collapse identical text from the same conversation, recording the collapsed ids.",
+						},
+						"min_score": map[string]any{
+							"type":        "number",
+							"format":      "double",
+							"minimum":     0,
+							"maximum":     1,
+							"description": "Drop results below this score.",
+						},
+						"max_per_conversation": map[string]any{
+							"type":        "integer",
+							"minimum":     1,
+							"maximum":     50,
+							"description": "Cap how many results one conversation may contribute.",
+						},
 					},
 				},
 				"SearchResult": map[string]any{
@@ -615,6 +724,11 @@ func (s *Server) openAPISpec() map[string]any {
 						"embedding_provider":   map[string]any{"type": "string"},
 						"embedding_model":      map[string]any{"type": "string"},
 						"embedding_dimensions": map[string]any{"type": "integer"},
+						"pinned":               map[string]any{"type": "boolean", "description": "True when a user pinned this memory."},
+						"pinned_at":            map[string]any{"type": "string", "format": "date-time"},
+						"lexical_score":        map[string]any{"type": "number", "format": "double", "description": "Share of query terms found in this memory when hybrid search ran."},
+						"duplicate_count":      map[string]any{"type": "integer", "description": "Number of identical memories collapsed into this result."},
+						"duplicate_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 					},
 				},
 				"SearchResponse": map[string]any{
@@ -633,12 +747,31 @@ func (s *Server) openAPISpec() map[string]any {
 					"type":     "object",
 					"required": []string{"query"},
 					"properties": map[string]any{
-						"query":            map[string]any{"type": "string", "minLength": 1},
-						"limit":            map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.ContextPack.MaxLimit},
-						"filters":          map[string]any{"$ref": "#/components/schemas/SearchFilters"},
-						"include_proposed": map[string]any{"type": "boolean"},
-						"include_rejected": map[string]any{"type": "boolean"},
-						"canonical_first":  map[string]any{"type": "boolean"},
+						"query":                map[string]any{"type": "string", "minLength": 1},
+						"limit":                map[string]any{"type": "integer", "minimum": 1, "maximum": s.cfg.ContextPack.MaxLimit},
+						"filters":              map[string]any{"$ref": "#/components/schemas/SearchFilters"},
+						"include_proposed":     map[string]any{"type": "boolean"},
+						"include_rejected":     map[string]any{"type": "boolean"},
+						"canonical_first":      map[string]any{"type": "boolean"},
+						"hybrid":               map[string]any{"type": "boolean"},
+						"dedupe":               map[string]any{"type": "boolean"},
+						"min_score":            map[string]any{"type": "number", "format": "double", "minimum": 0, "maximum": 1},
+						"max_per_conversation": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+						"max_characters": map[string]any{
+							"type":        "integer",
+							"minimum":     1,
+							"maximum":     s.cfg.ContextPack.MaxCharacters,
+							"description": "Character budget for the assembled pack.",
+						},
+						"quote_only": map[string]any{
+							"type":        "boolean",
+							"description": "Keep only source quotes, dropping full text and summaries.",
+						},
+						"order": map[string]any{
+							"type":        "string",
+							"enum":        []string{"relevance", "chronological"},
+							"description": "Order the pack by score or oldest-first.",
+						},
 					},
 				},
 				"ContextPackResponse": map[string]any{
@@ -650,7 +783,23 @@ func (s *Server) openAPISpec() map[string]any {
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/SearchResult"},
 						},
-						"store": map[string]any{"$ref": "#/components/schemas/StoreStatus"},
+						"used_memory_ids": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "Memory ids included in the pack, in pack order.",
+						},
+						"budget": map[string]any{"$ref": "#/components/schemas/ContextPackBudget"},
+						"store":  map[string]any{"$ref": "#/components/schemas/StoreStatus"},
+					},
+				},
+				"ContextPackBudget": map[string]any{
+					"type":     "object",
+					"required": []string{"characters_used", "results_included"},
+					"properties": map[string]any{
+						"character_limit":  map[string]any{"type": "integer"},
+						"characters_used":  map[string]any{"type": "integer"},
+						"results_included": map[string]any{"type": "integer"},
+						"dropped":          map[string]any{"type": "integer"},
 					},
 				},
 				"MessageRecord": map[string]any{
@@ -695,6 +844,51 @@ func (s *Server) openAPISpec() map[string]any {
 						},
 						"persisted": map[string]any{"type": "boolean", "description": "False when the batch was served by the in-memory fallback store and will not survive a restart."},
 						"store":     map[string]any{"$ref": "#/components/schemas/StoreStatus"},
+					},
+				},
+				"PinRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"memory_ids"},
+					"properties": map[string]any{
+						"memory_ids": map[string]any{
+							"type":     "array",
+							"minItems": 1,
+							"maxItems": 500,
+							"items":    map[string]any{"type": "string"},
+						},
+						"pinned": map[string]any{"type": "boolean", "description": "Defaults to true."},
+						"reason": map[string]any{"type": "string", "maxLength": 500},
+						"actor":  map[string]any{"type": "string", "maxLength": 120},
+					},
+				},
+				"CorrectRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"memory_id"},
+					"properties": map[string]any{
+						"memory_id":    map[string]any{"type": "string"},
+						"text":         map[string]any{"type": "string"},
+						"summary":      map[string]any{"type": "string"},
+						"source_quote": map[string]any{"type": "string"},
+						"memory_kind":  map[string]any{"type": "string"},
+						"project":      map[string]any{"type": "string"},
+						"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"reason":       map[string]any{"type": "string", "maxLength": 500},
+						"actor":        map[string]any{"type": "string", "maxLength": 120},
+					},
+				},
+				"ForgetRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"memory_ids"},
+					"properties": map[string]any{
+						"memory_ids": map[string]any{
+							"type":     "array",
+							"minItems": 1,
+							"maxItems": 500,
+							"items":    map[string]any{"type": "string"},
+						},
+						"hard":   map[string]any{"type": "boolean", "description": "Removes the points instead of marking them deleted."},
+						"reason": map[string]any{"type": "string", "maxLength": 500},
+						"actor":  map[string]any{"type": "string", "maxLength": 120},
 					},
 				},
 				"StoreStatus": map[string]any{

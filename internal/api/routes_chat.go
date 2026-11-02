@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -26,12 +25,7 @@ const chatRequestTimeout = 120 * time.Second
 
 func (s *Server) handleMemoryChat(w http.ResponseWriter, r *http.Request) {
 	var req memory.ChatMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -371,12 +365,7 @@ func (s *Server) handleMindDrillMemoryStats(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleMindDrillMemorySearch(w http.ResponseWriter, r *http.Request) {
 	var req memory.SearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{
-			Code:    "INVALID_REQUEST",
-			Message: "Request body must be valid JSON.",
-			Detail:  err.Error(),
-		})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

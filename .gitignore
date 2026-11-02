@@ -18,10 +18,13 @@ dist/
 *.test
 *.out
 coverage.out
+# Binaries built at the repo root (make_all.sh writes to bin/ instead).
+# The Python package also lives at frontpocket/, so the directory is
+# re-included below. Prefer ./make_all.sh so this stays unambiguous.
 /frontpocket
+/minddrill
 !/frontpocket/
 !/frontpocket/*.py
-/minddrill
 
 # Python
 venv/
@@ -42,6 +45,8 @@ data/
 storage/
 qdrant_storage/
 redis_data/
+caption_cache.json
+snapshots/
 
 # Extracted export and incoming data used for local ingest — never commit this.
 unzipped/

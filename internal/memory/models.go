@@ -43,6 +43,7 @@ const (
 	StatusOutdated            = "outdated"
 	StatusNeedsReview         = "needs_review"
 	StatusRejected            = "rejected"
+	StatusDeleted             = "deleted"
 )
 
 type MessageRecord struct {
@@ -116,6 +117,13 @@ type MemoryPoint struct {
 	MergeTargetID          string     `json:"merge_target_id,omitempty"`
 	AIProvider             string     `json:"ai_provider,omitempty"`
 	AIModel                string     `json:"ai_model,omitempty"`
+	Pinned                 bool       `json:"pinned,omitempty"`
+	PinnedAt               string     `json:"pinned_at,omitempty"`
+	PinnedBy               string     `json:"pinned_by,omitempty"`
+	CorrectedAt            string     `json:"corrected_at,omitempty"`
+	CorrectedBy            string     `json:"corrected_by,omitempty"`
+	DeletedAt              string     `json:"deleted_at,omitempty"`
+	DeletedBy              string     `json:"deleted_by,omitempty"`
 	Vector                 []float32  `json:"-"`
 }
 
@@ -132,15 +140,20 @@ type SearchFilters struct {
 	UserShared     *bool    `json:"user_shared,omitempty"`
 	FeedbackRating string   `json:"feedback_rating,omitempty"`
 	HasAttachment  *bool    `json:"has_attachment,omitempty"`
+	Pinned         *bool    `json:"pinned,omitempty"`
 }
 
 type SearchRequest struct {
-	Query           string        `json:"query"`
-	Limit           int           `json:"limit,omitempty"`
-	Filters         SearchFilters `json:"filters,omitempty"`
-	IncludeProposed bool          `json:"include_proposed,omitempty"`
-	IncludeRejected bool          `json:"include_rejected,omitempty"`
-	CanonicalFirst  bool          `json:"canonical_first,omitempty"`
+	Query              string        `json:"query"`
+	Limit              int           `json:"limit,omitempty"`
+	Filters            SearchFilters `json:"filters,omitempty"`
+	IncludeProposed    bool          `json:"include_proposed,omitempty"`
+	IncludeRejected    bool          `json:"include_rejected,omitempty"`
+	CanonicalFirst     bool          `json:"canonical_first,omitempty"`
+	Hybrid             bool          `json:"hybrid,omitempty"`
+	Dedupe             bool          `json:"dedupe,omitempty"`
+	MinScore           float64       `json:"min_score,omitempty"`
+	MaxPerConversation int           `json:"max_per_conversation,omitempty"`
 }
 
 type SearchResult struct {
@@ -176,6 +189,11 @@ type SearchResult struct {
 	DateBasis           string     `json:"date_basis,omitempty"`
 	AIProvider          string     `json:"ai_provider,omitempty"`
 	AIModel             string     `json:"ai_model,omitempty"`
+	Pinned              bool       `json:"pinned,omitempty"`
+	PinnedAt            string     `json:"pinned_at,omitempty"`
+	LexicalScore        float64    `json:"lexical_score,omitempty"`
+	DuplicateCount      int        `json:"duplicate_count,omitempty"`
+	DuplicateIDs        []string   `json:"duplicate_ids,omitempty"`
 }
 
 type SearchResponse struct {
@@ -185,18 +203,27 @@ type SearchResponse struct {
 }
 
 type ContextPackRequest struct {
-	Query           string        `json:"query"`
-	Limit           int           `json:"limit,omitempty"`
-	Filters         SearchFilters `json:"filters,omitempty"`
-	IncludeProposed bool          `json:"include_proposed,omitempty"`
-	IncludeRejected bool          `json:"include_rejected,omitempty"`
-	CanonicalFirst  bool          `json:"canonical_first,omitempty"`
+	Query              string        `json:"query"`
+	Limit              int           `json:"limit,omitempty"`
+	Filters            SearchFilters `json:"filters,omitempty"`
+	IncludeProposed    bool          `json:"include_proposed,omitempty"`
+	IncludeRejected    bool          `json:"include_rejected,omitempty"`
+	CanonicalFirst     bool          `json:"canonical_first,omitempty"`
+	MaxCharacters      int           `json:"max_characters,omitempty"`
+	QuoteOnly          bool          `json:"quote_only,omitempty"`
+	Order              string        `json:"order,omitempty"`
+	Hybrid             bool          `json:"hybrid,omitempty"`
+	Dedupe             bool          `json:"dedupe,omitempty"`
+	MinScore           float64       `json:"min_score,omitempty"`
+	MaxPerConversation int           `json:"max_per_conversation,omitempty"`
 }
 
 type ContextPackResponse struct {
-	Query      string         `json:"query"`
-	MemoryPack []SearchResult `json:"memory_pack"`
-	Store      *StoreStatus   `json:"store,omitempty"`
+	Query         string             `json:"query"`
+	MemoryPack    []SearchResult     `json:"memory_pack"`
+	UsedMemoryIDs []string           `json:"used_memory_ids,omitempty"`
+	Budget        *ContextPackBudget `json:"budget,omitempty"`
+	Store         *StoreStatus       `json:"store,omitempty"`
 }
 
 type IngestChatRequest struct {

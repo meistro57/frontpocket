@@ -15,6 +15,7 @@ import (
 	"github.com/meistro57/frontpocket/internal/embed"
 	"github.com/meistro57/frontpocket/internal/memory"
 	"github.com/meistro57/frontpocket/internal/memoryloop"
+	"github.com/meistro57/frontpocket/internal/metrics"
 	"github.com/meistro57/frontpocket/internal/store"
 	"github.com/meistro57/frontpocket/internal/tools"
 	"github.com/meistro57/loadout"
@@ -47,6 +48,7 @@ type Server struct {
 	reviewQueue       *memoryloop.FileReviewQueue
 	toolRegistry      *loadout.Registry
 	mcpManager        *mcp.Manager
+	mutationLog       *mutationAuditLog
 }
 
 type memoryStatsCacheEntry struct {
@@ -201,6 +203,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		reviewQueue:       memoryloop.NewFileReviewQueue(queuePath),
 		toolRegistry:      toolRegistry,
 		mcpManager:        mcpManager,
+		mutationLog:       newMutationAuditLog(cfg.Security.MutationLogPath),
 	}
 
 	s.registerRoutes()
@@ -222,7 +225,11 @@ func (s *Server) Handler() http.Handler {
 		)
 	}
 
-	return requestLogMiddleware(s.logger, s.cfg.Logging.LogRequests, handler)
+	handler = RequestIDMiddleware(handler)
+	handler = BodyLimitMiddleware(s.cfg.Limits.MaxRequestBodyBytes, handler)
+	handler = RateLimitMiddleware(s.cfg.Limits.RateLimitPerMinute, s.cfg.Limits.RateLimitBurst, metrics.Default(), handler)
+
+	return MetricsMiddleware(metrics.Default(), s.logger, s.cfg.Logging.LogRequests, handler)
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -252,12 +259,17 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 	s.mux.HandleFunc("POST /memory/ingest/chat", s.handleMemoryIngest)
 	s.mux.HandleFunc("POST /memory/search", s.handleMemorySearch)
 	s.mux.HandleFunc("POST /memory/context-pack", s.handleContextPack)
 	s.mux.HandleFunc("GET /memory/browse", s.handleMemoryBrowse)
 	s.mux.HandleFunc("GET /memory/stats", s.handleMemoryStats)
+	s.mux.HandleFunc("POST /memory/pin", s.handleMemoryPin)
+	s.mux.HandleFunc("POST /memory/correct", s.handleMemoryCorrect)
+	s.mux.HandleFunc("DELETE /memory/forget", s.handleMemoryForget)
+	s.mux.HandleFunc("GET /memory/export", s.handleMemoryExport)
 	s.mux.HandleFunc("POST /memory/session", s.handleMemorySession)
 	s.mux.HandleFunc("DELETE /memory/session", s.handleMemorySessionDelete)
 	s.mux.HandleFunc("POST /memory/chat", s.handleMemoryChat)

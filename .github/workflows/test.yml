@@ -30,6 +30,9 @@ jobs:
             exit 1
           fi
 
+      - name: Build from clean checkout
+        run: go build ./...
+
       - name: Run unit tests
         run: go test ./... -timeout 300s
 

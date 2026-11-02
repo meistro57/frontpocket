@@ -1,6 +1,6 @@
 # MindDrill
 
-<img src="../MindDrill_logo.png" alt="MindDrill" width="140" />
+<img src="../cmd/minddrill/logo.png" alt="MindDrill" width="140" />
 
 MindDrill is FrontPocket's built-in memory explorer: a single-page browser UI for chat mode,
 searching your memory, building context packs, and viewing memory stats. The page is embedded

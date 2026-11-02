@@ -2,10 +2,11 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 COPY go.mod ./
+COPY vendor ./vendor
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN go build -o /bin/frontpocket ./cmd/frontpocket
+RUN go build -mod=vendor -o /bin/frontpocket ./cmd/frontpocket
 
 FROM alpine:3.20
 RUN adduser -D -g '' frontpocket

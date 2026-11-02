@@ -42,6 +42,14 @@ No crystal ball. Just retrieval with receipts.
 
 ## What's new
 
+- Retrieval can blend dense similarity with lexical overlap (`hybrid: true`), collapse duplicate chunks (`dedupe: true`), cap how much one conversation contributes (`max_per_conversation`), and honour a per-request `min_score`. Since agents repeat queries, query embeddings are cached for five minutes.
+- `/memory/context-pack` now assembles a real pack: character budget (`max_characters`), quote-only mode, relevance or chronological ordering, `used_memory_ids`, and a `budget` block that reports what was kept and what was dropped. The dead `CONTEXT_PACK_USE_SUMMARIZER` flag is gone; `CONTEXT_PACK_MAX_CHARACTERS` replaces it.
+- User control endpoints: `POST /memory/pin`, `POST /memory/correct`, `DELETE /memory/forget` (soft by default, `hard: true` to remove points), and `GET /memory/export` (JSONL). Every accepted mutation is appended to `FRONTPOCKET_MEMORY_MUTATION_LOG`. They are gated by `ENABLE_ADMIN_ENDPOINTS`, which defaults to on only in `FRONTPOCKET_MODE=local`.
+- MindDrill result cards gained pin/unpin and forget actions wired to those endpoints.
+- `GET /metrics` exposes Prometheus counters and duration summaries (requests by route/status, embedding cache hits/misses, search latency, rate-limit rejections).
+- API hardening: `MAX_REQUEST_BODY_BYTES` (413 on overflow), optional `RATE_LIMIT_PER_MINUTE` with `RATE_LIMIT_BURST` (429 plus `Retry-After`), `X-Request-ID` propagation into logs, and consistent structured errors.
+- `internal/tools/deepdrill.go` (3.2k lines) is split into focused files (types, plan, execute, hypothesis, provenance, store, parse), each under 700 lines.
+- Dependencies are vendored, so a clean clone builds with no sibling checkouts, and `docker compose` now waits for healthy Qdrant/Redis before starting the API.
 - Memory writes and reads no longer pretend to succeed when Qdrant is unreachable. Ingest fails with `503` instead of reporting points that were never persisted, and search, browse, stats, context-pack, and MindDrill search fail rather than returning an empty result set that looks like "no memory".
 - Responses carry `"store": {"degraded": true, "reason": "..."}` when a request was served from the in-memory fallback store, and ingest additionally reports `"persisted": false`. The fallback is now opt-in via `FRONTPOCKET_ALLOW_MEMORY_FALLBACK=false`.
 - Filter payload indexes (`project`, `memory_kind`, `speaker`, `source_type`, `conversation_id`, `ai_provider`, `ai_model`, `feedback_rating`, `attachment_source_system`, `tags`, `status`, `user_starred`, `user_shared`, `canonical`, `timestamp`) are created automatically, so filtered search, browse, and stats avoid full-collection scans.
@@ -75,6 +83,11 @@ POST   /memory/ingest/chat
 POST   /memory/search
 POST   /memory/context-pack
 POST   /memory/chat
+POST   /memory/pin
+POST   /memory/correct
+DELETE /memory/forget
+GET    /memory/export
+GET    /metrics
 GET    /memory/canon/proposed
 GET    /memory/canon/proposed/{id}
 POST   /memory/canon/proposed/{id}/approve
@@ -104,6 +117,37 @@ FrontPocket would rather say "I could not check" than invent an empty answer.
 - **Reads:** search, browse, stats, context-pack, and MindDrill search return `503` when the store cannot answer. A dimension mismatch stays a `500`, because that is a configuration error rather than an outage.
 - **Opt-in fallback:** with `FRONTPOCKET_ALLOW_MEMORY_FALLBACK=true`, reads and writes fall back to a process-local in-memory store. Those responses include `"store": {"degraded": true, "reason": "..."}`, and ingest also sets `"persisted": false`. Ingested data disappears when the process exits.
 - **Indexes:** filter payload indexes are created on first use of a collection, so filtered queries do not degrade into scans as the corpus grows.
+
+### Correcting and forgetting memory
+
+Recall you cannot correct is just a rumor with citations. Admin endpoints stay private:
+
+```bash
+# pin a memory so cleanup passes leave it alone
+curl -X POST localhost:8088/memory/pin \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_ids":["chat_20260622_turn_004_chunk_001"],"reason":"still true","actor":"mark"}'
+
+# fix the text of a memory without losing the original source quote
+curl -X POST localhost:8088/memory/correct \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_id":"chat_20260622_turn_004_chunk_001","text":"FrontPocket is local-first.","reason":"typo","actor":"mark"}'
+
+# stop a memory from being recalled (soft delete), or delete the point entirely
+curl -X DELETE localhost:8088/memory/forget \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_ids":["chat_20260622_turn_004_chunk_001"],"reason":"no longer true"}'
+curl -X DELETE localhost:8088/memory/forget \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_ids":["chat_20260622_turn_004_chunk_001"],"hard":true}'
+
+# export everything matching a filter as JSONL
+curl 'localhost:8088/memory/export?project=FrontPocket&limit=500' > frontpocket_export.jsonl
+```
+
+Pin, correct, forget, and export require `ENABLE_ADMIN_ENDPOINTS=true` (the default in
+`FRONTPOCKET_MODE=local`). Accepted mutations append to `FRONTPOCKET_MEMORY_MUTATION_LOG`
+(`data/memory_mutations.jsonl` by default) with actor, reason, and affected fields.
 
 ---
 

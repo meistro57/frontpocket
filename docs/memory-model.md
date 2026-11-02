@@ -30,6 +30,33 @@ FrontPocket stores memory points with:
 - Collection vector size is validated against embedding output dimensions.
 - Filter payload indexes (`project`, `memory_kind`, `speaker`, `source_type`, `conversation_id`, `ai_provider`, `ai_model`, `feedback_rating`, `attachment_source_system`, `tags`, `status`, `user_starred`, `user_shared`, `canonical`, `timestamp`) are created on first use of a collection and re-created idempotently on existing collections, so filtered search, browse, and stats avoid full scans.
 
+## Retrieval tuning
+
+- `hybrid: true` re-ranks the dense candidate pool with lexical overlap (reciprocal rank fusion), so exact names, quotes, and code symbols surface without discarding semantic matches. Scores are normalised to 0-1.
+- `dedupe: true` collapses memories with identical text inside the same conversation, keeping the highest-scoring representative and reporting `duplicate_count` / `duplicate_ids`.
+- `max_per_conversation` caps how much of one long thread can occupy the result set.
+- `min_score` drops weak matches server-side; it is clamped to at least `SEARCH_MIN_SCORE`.
+- Query embeddings are cached for five minutes per provider/model, so repeated identical queries skip the embedding round trip.
+- `GET /metrics` exposes counters for requests, embedding cache hits/misses, search duration, and rate-limit rejections.
+
+## Context pack behavior
+
+`POST /memory/context-pack` builds a bounded pack rather than forwarding search results:
+
+- `max_characters` sets the budget, clamped to `CONTEXT_PACK_MAX_CHARACTERS`; entries that would exceed it are dropped and counted.
+- `quote_only` keeps source quotes and drops full text and summaries.
+- `order` accepts `relevance` (default) or `chronological`.
+- Responses include `used_memory_ids` in pack order and a `budget` block (`character_limit`, `characters_used`, `results_included`, `dropped`).
+
+## Mutation and audit behavior
+
+- `POST /memory/pin` sets `pinned`, `pinned_at`, and `pinned_by` on the payload.
+- `POST /memory/correct` rewrites `text`, `summary`, `source_quote`, `memory_kind`, `project`, or `tags` and stamps `corrected_at` / `corrected_by`. The original source quote is preserved unless explicitly corrected.
+- `DELETE /memory/forget` soft-deletes by setting `status=deleted` (excluded from recall by default) and stamps `deleted_at` / `deleted_by`; `hard: true` removes the points.
+- `GET /memory/export` streams `application/x-ndjson` for backup and inspection.
+- Every accepted mutation is appended to `FRONTPOCKET_MEMORY_MUTATION_LOG` with timestamp, action, actor, memory ids, affected fields, and reason.
+- All four endpoints require `ENABLE_ADMIN_ENDPOINTS=true`, which defaults to on only in `FRONTPOCKET_MODE=local`.
+
 ## Store failure and degraded reads
 
 - Ingest returns `503` with code `INGEST_FAILED` when points could not be persisted; the detail carries the store error. It never reports success for data that was not written.

@@ -1,0 +1,5 @@
+# github.com/meistro57/loadout v0.0.0 => ../loadout
+## explicit; go 1.22
+github.com/meistro57/loadout
+github.com/meistro57/loadout/mcp
+# github.com/meistro57/loadout => ../loadout

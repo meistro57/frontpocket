@@ -40,6 +40,9 @@ frontpocket memory-loop + /memory/canon/proposed/*
 - Filter payload indexes are created on first use of a collection (and idempotently on existing ones), so filtered search, browse, and stats do not degrade into full scans.
 - Store failures are reported, not absorbed: ingest returns `503` when points cannot be persisted, and read endpoints return `503` rather than an empty result set. The in-memory fallback store is opt-in (`FRONTPOCKET_ALLOW_MEMORY_FALLBACK`) and marks responses with `"store": {"degraded": true, ...}`.
 - FrontPocket corpus memory and MindDrill chat memory use separate Qdrant collections on the same Qdrant instance (`QDRANT_COLLECTION` and `MINDDRILL_MEMORY_COLLECTION`).
+- Request handling is layered: CORS outermost, then API key auth, request IDs, body-size limits, rate limiting, and metrics/logging, so every route shares one boundary.
+- Mutation routes (`/memory/pin`, `/memory/correct`, `/memory/forget`, `/memory/export`) are gated by `ENABLE_ADMIN_ENDPOINTS` and append to an audit log; the public recall surface stays read-only.
+- Dependencies are vendored in `vendor/`, so builds do not require a sibling `loadout` checkout.
 - The API applies CORS as the outermost middleware (configured via `CORS_ALLOW_ORIGINS`), so browser clients can call it directly and `OPTIONS` preflight is handled before auth.
 - MindDrill is a separate, static browser UI (`cmd/minddrill`) that is purely an API client — it stores nothing itself and never bypasses the API boundary.
 - MindDrill UI rendering is mode-isolated (`search`, `browse`, `context`, `chat` each render into dedicated targets), and async request IDs are used client-side to ignore stale responses when newer requests are already in flight.

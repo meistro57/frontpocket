@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -67,8 +66,7 @@ func (s *Server) handleProposedCanonApprove(w http.ResponseWriter, r *http.Reque
 	}
 	var req approveRequest
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "INVALID_REQUEST", Message: "Request body must be valid JSON.", Detail: err.Error()})
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 	}
@@ -87,8 +85,7 @@ func (s *Server) handleProposedCanonReject(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req rejectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "INVALID_REQUEST", Message: "Request body must be valid JSON.", Detail: err.Error()})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	item, err := s.reviewQueue.Reject(id, strings.TrimSpace(req.Reason), strings.TrimSpace(req.ReviewedBy))
@@ -106,8 +103,7 @@ func (s *Server) handleProposedCanonMerge(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req mergeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "INVALID_REQUEST", Message: "Request body must be valid JSON.", Detail: err.Error()})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if strings.TrimSpace(req.TargetID) == "" {

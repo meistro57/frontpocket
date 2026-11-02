@@ -1630,6 +1630,8 @@ function cardHTML(item, i, ns, entry = {}) {
       <button class="btn btn-sm" onclick="event.stopPropagation();sameConvo(${i},'${ns}')">💬 same convo</button>
       <button class="btn btn-sm" onclick="event.stopPropagation();findRelated(${i},'${ns}')">🕸 related</button>
       <button class="btn btn-sm" onclick="event.stopPropagation();copyPayload(${i},'${ns}')">📋 copy</button>
+      <button class="btn btn-sm" onclick="event.stopPropagation();pinMemory(${i},'${ns}',this)">📌 ${p.pinned ? 'unpin' : 'pin'}</button>
+      <button class="btn btn-sm" onclick="event.stopPropagation();forgetMemory(${i},'${ns}',this)">🗑 forget</button>
     </div>
   </div>`;
 }
@@ -1691,6 +1693,47 @@ function copyPayload(i, ns) {
       setTimeout(() => { btn.textContent = '📋 copy'; }, 1500);
     }
   });
+}
+
+async function pinMemory(i, ns, btn) {
+  const p = getItem(i, ns).payload || getItem(i, ns);
+  const memoryId = p.memory_id;
+  if (!memoryId) return;
+  const pinned = !p.pinned;
+  try {
+    await fetchJSON('/memory/pin', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ memory_ids: [memoryId], pinned }),
+    });
+    p.pinned = pinned;
+    if (btn) {
+      btn.textContent = pinned ? '📌 unpin' : '📌 pin';
+      btn.blur();
+    }
+  } catch (err) {
+    alert(`Could not update pin state: ${err.message}`);
+  }
+}
+
+async function forgetMemory(i, ns, btn) {
+  const p = getItem(i, ns).payload || getItem(i, ns);
+  const memoryId = p.memory_id;
+  if (!memoryId) return;
+  if (!confirm('Forget this memory? It stops appearing in recall.')) return;
+  try {
+    await fetchJSON('/memory/forget', {
+      method: 'DELETE',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ memory_ids: [memoryId], reason: 'minddrill ui' }),
+    });
+    if (btn) {
+      btn.textContent = '🗑 forgotten';
+      btn.disabled = true;
+    }
+  } catch (err) {
+    alert(`Could not forget memory: ${err.message}`);
+  }
 }
 
 function contextPackToMarkdown(data, query) {

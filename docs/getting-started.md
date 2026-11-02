@@ -66,6 +66,11 @@ SEARCH_MAX_LIMIT=30
 ./make_all.sh
 ```
 
+Dependencies are vendored in `vendor/`, so a clean clone builds with no sibling
+repositories. `go.mod` still carries a `replace` for `github.com/meistro57/loadout`
+so the module can be developed locally; after changing that module, re-run
+`go mod vendor` and commit the result.
+
 ## 3) Install missing local dependencies
 
 ```bash

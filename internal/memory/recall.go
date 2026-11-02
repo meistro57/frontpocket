@@ -121,6 +121,15 @@ func (s *InMemoryStore) Search(_ context.Context, req SearchRequest) ([]SearchRe
 		return results[i].Score > results[j].Score
 	})
 
+	if req.Hybrid {
+		results = FuseHybridResults(req.Query, results, limit)
+	}
+	if req.Dedupe || req.MaxPerConversation > 0 {
+		results = DedupeResults(results, req.MaxPerConversation)
+	}
+	if req.MinScore > 0 {
+		results = ApplyMinScore(results, req.MinScore)
+	}
 	if len(results) > limit {
 		results = results[:limit]
 	}
@@ -378,6 +387,9 @@ func matchesFilters(point MemoryPoint, filters SearchFilters) bool {
 			return false
 		}
 	}
+	if filters.Pinned != nil && point.Pinned != *filters.Pinned {
+		return false
+	}
 	if len(filters.Tags) == 0 {
 		return true
 	}
@@ -443,7 +455,7 @@ func shouldExcludeByStatus(includeRejected bool, status string) bool {
 		return false
 	}
 	switch status {
-	case StatusRejected, StatusContradicted, StatusOutdated:
+	case StatusRejected, StatusContradicted, StatusOutdated, StatusDeleted:
 		return true
 	default:
 		return false
