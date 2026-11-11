@@ -190,10 +190,13 @@ func TestMemoryMutationsBlockedWhenAdminDisabled(t *testing.T) {
 	s.cfg.Security.EnableAdminEndpoints = false
 
 	for name, handler := range map[string]http.HandlerFunc{
-		"pin":     s.handleMemoryPin,
-		"correct": s.handleMemoryCorrect,
-		"forget":  s.handleMemoryForget,
-		"export":  s.handleMemoryExport,
+		"pin":           s.handleMemoryPin,
+		"correct":       s.handleMemoryCorrect,
+		"forget":        s.handleMemoryForget,
+		"export":        s.handleMemoryExport,
+		"canon_approve": s.handleProposedCanonApprove,
+		"canon_reject":  s.handleProposedCanonReject,
+		"canon_merge":   s.handleProposedCanonMerge,
 	} {
 		rr := httptest.NewRecorder()
 		handler(rr, httptest.NewRequest(http.MethodPost, "/memory/"+name, strings.NewReader(`{}`)))

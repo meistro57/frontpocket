@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -13,26 +14,26 @@ import (
 )
 
 func ParseJSONL(input string) ([]MessageRecord, error) {
-	scanner := bufio.NewScanner(strings.NewReader(input))
+	reader := bufio.NewReader(strings.NewReader(input))
 	records := make([]MessageRecord, 0)
 	lineNumber := 0
 
-	for scanner.Scan() {
-		lineNumber++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	for {
+		line, readErr := reader.ReadString('\n')
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lineNumber++
+			var rec MessageRecord
+			if err := json.Unmarshal([]byte(trimmed), &rec); err != nil {
+				return nil, fmt.Errorf("invalid JSONL at line %d: %w", lineNumber, err)
+			}
+			records = append(records, rec)
 		}
-
-		var rec MessageRecord
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			return nil, fmt.Errorf("invalid JSONL at line %d: %w", lineNumber, err)
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, readErr
 		}
-		records = append(records, rec)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	return records, nil

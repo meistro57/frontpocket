@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -246,14 +248,13 @@ func TestUpsertRetriesTransientConnectionError(t *testing.T) {
 	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 	defer func() { qdrantWriteRetryDelays = originalDelays }()
 
-	attempts := 0
+	var attempts atomic.Int64
 	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
 			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
-			attempts++
-			if attempts == 1 {
+			if attempts.Add(1) == 1 {
 				hijacker, ok := w.(http.Hijacker)
 				if !ok {
 					t.Fatal("response writer does not support hijacking")
@@ -292,8 +293,8 @@ func TestUpsertRetriesTransientConnectionError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected retry to recover transient error, got %v", err)
 	}
-	if attempts != 2 {
-		t.Fatalf("expected 2 upsert attempts, got %d", attempts)
+	if attempts.Load() != 2 {
+		t.Fatalf("expected 2 upsert attempts, got %d", attempts.Load())
 	}
 }
 
@@ -302,13 +303,13 @@ func TestUpsertFailsAfterTransientRetriesExhausted(t *testing.T) {
 	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 	defer func() { qdrantWriteRetryDelays = originalDelays }()
 
-	attempts := 0
+	var attempts atomic.Int64
 	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
 			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
-			attempts++
+			attempts.Add(1)
 			hijacker, ok := w.(http.Hijacker)
 			if !ok {
 				t.Fatal("response writer does not support hijacking")
@@ -345,8 +346,8 @@ func TestUpsertFailsAfterTransientRetriesExhausted(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected upsert error after retries were exhausted")
 	}
-	if attempts != 3 {
-		t.Fatalf("expected 3 upsert attempts, got %d", attempts)
+	if attempts.Load() != 3 {
+		t.Fatalf("expected 3 upsert attempts, got %d", attempts.Load())
 	}
 }
 
@@ -355,13 +356,13 @@ func TestUpsertDoesNotRetryStatusErrors(t *testing.T) {
 	qdrantWriteRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
 	defer func() { qdrantWriteRetryDelays = originalDelays }()
 
-	attempts := 0
+	var attempts atomic.Int64
 	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
 			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
-			attempts++
+			attempts.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"status":"error","result":null}`)
 		default:
@@ -390,22 +391,22 @@ func TestUpsertDoesNotRetryStatusErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected upsert error on qdrant status failure")
 	}
-	if attempts != 1 {
-		t.Fatalf("expected no retries for status error, got %d attempts", attempts)
+	if attempts.Load() != 1 {
+		t.Fatalf("expected no retries for status error, got %d attempts", attempts.Load())
 	}
 }
 
 func TestUpsertSplitsLargePointCountIntoMultipleRequests(t *testing.T) {
-	requests := 0
-	totalPoints := 0
-	maxPointsInRequest := 0
+	var requests atomic.Int64
+	var totalPoints atomic.Int64
+	var maxPointsInRequest atomic.Int64
 
 	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
 			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
-			requests++
+			requests.Add(1)
 			var req struct {
 				Points []struct{} `json:"points"`
 			}
@@ -415,9 +416,9 @@ func TestUpsertSplitsLargePointCountIntoMultipleRequests(t *testing.T) {
 			if len(req.Points) > qdrantMaxUpsertPoints {
 				t.Fatalf("request exceeded point cap: got %d > %d", len(req.Points), qdrantMaxUpsertPoints)
 			}
-			totalPoints += len(req.Points)
-			if len(req.Points) > maxPointsInRequest {
-				maxPointsInRequest = len(req.Points)
+			totalPoints.Add(int64(len(req.Points)))
+			if int64(len(req.Points)) > maxPointsInRequest.Load() {
+				maxPointsInRequest.Store(int64(len(req.Points)))
 			}
 			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
 		default:
@@ -450,19 +451,20 @@ func TestUpsertSplitsLargePointCountIntoMultipleRequests(t *testing.T) {
 	if err := memStore.Upsert(context.Background(), points); err != nil {
 		t.Fatalf("upsert failed: %v", err)
 	}
-	if requests < 3 {
-		t.Fatalf("expected multiple requests for 300 points, got %d", requests)
+	if requests.Load() < 3 {
+		t.Fatalf("expected multiple requests for 300 points, got %d", requests.Load())
 	}
-	if totalPoints != 300 {
-		t.Fatalf("expected 300 points upserted, got %d", totalPoints)
+	if totalPoints.Load() != 300 {
+		t.Fatalf("expected 300 points upserted, got %d", totalPoints.Load())
 	}
-	if maxPointsInRequest > qdrantMaxUpsertPoints {
-		t.Fatalf("max points per request exceeded cap: %d", maxPointsInRequest)
+	if maxPointsInRequest.Load() > qdrantMaxUpsertPoints {
+		t.Fatalf("max points per request exceeded cap: %d", maxPointsInRequest.Load())
 	}
 }
 
 func TestUpsertSplitsByPayloadBytes(t *testing.T) {
-	requests := 0
+	var requests atomic.Int64
+	var countersMu sync.Mutex
 	requestSizes := make([]int, 0, 3)
 	pointsPerRequest := make([]int, 0, 3)
 
@@ -471,19 +473,23 @@ func TestUpsertSplitsByPayloadBytes(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
 			_, _ = io.WriteString(w, `{"result":{"config":{"params":{"vectors":{"size":4,"distance":"Cosine"}}}}}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/collections/frontpocket_test/points":
-			requests++
+			requests.Add(1)
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatalf("failed reading body: %v", err)
 			}
+			countersMu.Lock()
 			requestSizes = append(requestSizes, len(body))
+			countersMu.Unlock()
 			var req struct {
 				Points []struct{} `json:"points"`
 			}
 			if err := json.Unmarshal(body, &req); err != nil {
 				t.Fatalf("failed decoding payload: %v", err)
 			}
+			countersMu.Lock()
 			pointsPerRequest = append(pointsPerRequest, len(req.Points))
+			countersMu.Unlock()
 			_, _ = io.WriteString(w, `{"status":"ok","result":{"operation_id":1}}`)
 		default:
 			http.NotFound(w, r)
@@ -547,16 +553,21 @@ func TestUpsertSplitsByPayloadBytes(t *testing.T) {
 	if err := memStore.Upsert(context.Background(), points); err != nil {
 		t.Fatalf("upsert failed: %v", err)
 	}
-	if requests < 2 {
-		t.Fatalf("expected payload byte split into multiple requests, got %d", requests)
+	countersMu.Lock()
+	requestSizesSnapshot := append([]int(nil), requestSizes...)
+	pointsPerRequestSnapshot := append([]int(nil), pointsPerRequest...)
+	countersMu.Unlock()
+
+	if requests.Load() < 2 {
+		t.Fatalf("expected payload byte split into multiple requests, got %d", requests.Load())
 	}
-	for idx, size := range requestSizes {
+	for idx, size := range requestSizesSnapshot {
 		if size > qdrantMaxUpsertPayloadBytes {
 			t.Fatalf("request %d payload size %d exceeds cap %d", idx, size, qdrantMaxUpsertPayloadBytes)
 		}
 	}
-	if len(pointsPerRequest) > 0 && pointsPerRequest[0] == len(points) {
-		t.Fatalf("expected first request to be split by bytes, got points per request=%v", pointsPerRequest)
+	if len(pointsPerRequestSnapshot) > 0 && pointsPerRequestSnapshot[0] == len(points) {
+		t.Fatalf("expected first request to be split by bytes, got points per request=%v", pointsPerRequestSnapshot)
 	}
 }
 
@@ -629,19 +640,19 @@ func TestMemoryPointFromPayloadIncludesAIFields(t *testing.T) {
 }
 
 func TestStatsAvoidsFullScrollAndCachesDistinctValues(t *testing.T) {
-	scrollCalls := 0
-	collectionInfoCalls := 0
+	var scrollCalls atomic.Int64
+	var collectionInfoCalls atomic.Int64
 
 	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/collections/frontpocket_test":
-			collectionInfoCalls++
+			collectionInfoCalls.Add(1)
 			_, _ = io.WriteString(w, `{"result":{"points_count":322000}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/facet":
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			_, _ = io.WriteString(w, `{"status":{"error":"facet unavailable"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/points/scroll":
-			scrollCalls++
+			scrollCalls.Add(1)
 			_, _ = io.WriteString(w, `{"result":{"points":[{"payload":{"memory_kind":"project_context","speaker":"user","project":"FrontPocket","source_title":"Title A"}},{"payload":{"memory_kind":"research_note","speaker":"assistant","project":"Notebook","source_title":"Title B"}}],"next_page_offset":null}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/collections/frontpocket_test/points/count":
 			body, err := io.ReadAll(r.Body)
@@ -692,11 +703,11 @@ func TestStatsAvoidsFullScrollAndCachesDistinctValues(t *testing.T) {
 	if first.Total != 322000 || second.Total != 322000 {
 		t.Fatalf("expected total from collection info, got first=%d second=%d", first.Total, second.Total)
 	}
-	if scrollCalls != 1 {
-		t.Fatalf("expected one sampled aggregation scroll on first call only, got %d", scrollCalls)
+	if scrollCalls.Load() != 1 {
+		t.Fatalf("expected one sampled aggregation scroll on first call only, got %d", scrollCalls.Load())
 	}
-	if collectionInfoCalls != 2 {
-		t.Fatalf("expected collection info on both calls, got %d", collectionInfoCalls)
+	if collectionInfoCalls.Load() != 2 {
+		t.Fatalf("expected collection info on both calls, got %d", collectionInfoCalls.Load())
 	}
 	if first.ByKind["project_context"] != 1 || first.ByKind["research_note"] != 1 {
 		t.Fatalf("unexpected by_kind counts: %#v", first.ByKind)

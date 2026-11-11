@@ -214,8 +214,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	var handler http.Handler = s.mux
 
-	// CORS must wrap everything including OPTIONS preflight — apply first (outermost).
-	handler = CORSMiddleware(s.cfg.Dev.CORSOrigins, handler)
+	handler = RequestIDMiddleware(handler)
 
 	if s.cfg.Security.RequireAPIKey {
 		handler = APIKeyMiddleware(
@@ -225,7 +224,10 @@ func (s *Server) Handler() http.Handler {
 		)
 	}
 
-	handler = RequestIDMiddleware(handler)
+	// CORS wraps auth so preflight requests and 401/403 responses still carry
+	// CORS headers. It must stay outside the API key middleware.
+	handler = CORSMiddleware(s.cfg.Dev.CORSOrigins, handler)
+
 	handler = BodyLimitMiddleware(s.cfg.Limits.MaxRequestBodyBytes, handler)
 	handler = RateLimitMiddleware(s.cfg.Limits.RateLimitPerMinute, s.cfg.Limits.RateLimitBurst, metrics.Default(), handler)
 

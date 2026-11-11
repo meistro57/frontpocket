@@ -1,20 +1,34 @@
 package api
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
 	"github.com/meistro57/frontpocket/internal/memory"
 )
 
+// apiKeyPlaceholder is the value shipped in .env.example. Treating it as
+// unconfigured means a deployment that forgets to change it does not expose
+// the API behind a publicly known key.
+const apiKeyPlaceholder = "change-me"
+
 func APIKeyMiddleware(expectedKey, header string, next http.Handler) http.Handler {
 	headerName := strings.TrimSpace(header)
 	if headerName == "" {
 		headerName = "X-FrontPocket-Key"
 	}
+	expected := strings.TrimSpace(expectedKey)
+	configured := expected != "" && expected != apiKeyPlaceholder
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSpace(r.Header.Get(headerName)) != strings.TrimSpace(expectedKey) {
+		if r.Method == http.MethodGet && r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		provided := strings.TrimSpace(r.Header.Get(headerName))
+		if !configured || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 			writeError(w, http.StatusUnauthorized, memory.ErrorBody{
 				Code:    "UNAUTHORIZED",
 				Message: "Missing or invalid API key.",

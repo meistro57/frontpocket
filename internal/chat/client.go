@@ -168,12 +168,15 @@ func cleanThinkingTags(s string) string {
 		if start == -1 {
 			break
 		}
-		end := strings.Index(s, "</think>")
+		rest := s[start+len("<think>"):]
+		end := strings.Index(rest, "</think>")
 		if end == -1 {
-			s = strings.TrimSpace(s[:start])
-			break
+			return strings.TrimSpace(s[:start])
 		}
-		s = strings.TrimSpace(s[:start] + s[end+len("</think>"):])
+		s = strings.TrimSpace(s[:start] + rest[end+len("</think>"):])
+	}
+	if end := strings.LastIndex(s, "</think>"); end != -1 {
+		s = strings.TrimSpace(s[end+len("</think>"):])
 	}
 	return s
 }

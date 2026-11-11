@@ -59,6 +59,9 @@ func (s *Server) handleProposedCanonGet(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleProposedCanonApprove(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminEndpoints(w) {
+		return
+	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "VALIDATION_ERROR", Message: "candidate id is required."})
@@ -79,6 +82,9 @@ func (s *Server) handleProposedCanonApprove(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleProposedCanonReject(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminEndpoints(w) {
+		return
+	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "VALIDATION_ERROR", Message: "candidate id is required."})
@@ -97,6 +103,9 @@ func (s *Server) handleProposedCanonReject(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleProposedCanonMerge(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminEndpoints(w) {
+		return
+	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, memory.ErrorBody{Code: "VALIDATION_ERROR", Message: "candidate id is required."})

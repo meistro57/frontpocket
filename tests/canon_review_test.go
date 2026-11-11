@@ -36,6 +36,7 @@ func TestProposedCanonApproveAndRejectEndpoints(t *testing.T) {
 		Redis:       config.RedisConfig{URL: redisURL, KeyPrefix: "frontpocket-test"},
 		Embedding:   config.EmbeddingConfig{Provider: "ollama", OllamaModel: "nomic-embed-text", OllamaBaseURL: embeddingServer.URL, Dimensions: 4},
 		Chat:        config.ChatConfig{Provider: "none"},
+		Security:    config.SecurityConfig{EnableAdminEndpoints: true},
 		Ingestion:   config.IngestionConfig{DefaultSourceType: "chat_export", StoreAssistantMessages: true, StoreUserMessages: true},
 		Chunking:    config.ChunkingConfig{Size: 900, Overlap: 150, MinSize: 120},
 		Search:      config.SearchConfig{DefaultLimit: 5, MaxLimit: 20, IncludeSourceQuote: true, IncludeFullText: true, CacheTTLSeconds: 30},

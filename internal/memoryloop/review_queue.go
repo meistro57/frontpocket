@@ -88,6 +88,21 @@ func (q *FileReviewQueue) Upsert(candidates []Candidate) error {
 		}
 		candidate.UpdatedAt = now
 		if idx, ok := index[candidate.ID]; ok {
+			existing := records[idx]
+			if !existing.CreatedAt.IsZero() {
+				candidate.CreatedAt = existing.CreatedAt
+			}
+			if existing.ReviewedAt != nil {
+				// Re-running the loop must not revive a candidate a person
+				// already approved, rejected, or merged.
+				candidate.Status = existing.Status
+				candidate.Canonical = existing.Canonical
+				candidate.ReviewedAt = existing.ReviewedAt
+				candidate.ReviewedBy = existing.ReviewedBy
+				candidate.RejectionReason = existing.RejectionReason
+				candidate.MergeTargetID = existing.MergeTargetID
+				candidate.MergedFrom = existing.MergedFrom
+			}
 			records[idx] = candidate
 			continue
 		}
