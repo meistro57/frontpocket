@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -75,6 +76,39 @@ func (s *Server) memoryMutator() (memoryPayloadPatcher, *memory.ErrorBody) {
 	return patcher, nil
 }
 
+// requireExistingMemories rejects mutations that name unknown ids when the
+// store can verify them, so a typo does not come back as a successful write.
+func (s *Server) requireExistingMemories(w http.ResponseWriter, r *http.Request, ids []string) bool {
+	checker, ok := s.memoryStore.(memory.MemoryIDExistser)
+	if !ok {
+		return true
+	}
+	exists, err := checker.MemoryIDsExist(r.Context(), ids)
+	if err != nil {
+		writeError(w, statusForStoreError(err), memory.ErrorBody{
+			Code:    "MEMORY_LOOKUP_FAILED",
+			Message: "Could not verify memory ids.",
+			Detail:  err.Error(),
+		})
+		return false
+	}
+	missing := make([]string, 0)
+	for _, id := range ids {
+		if !exists[id] {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return true
+	}
+	writeError(w, http.StatusNotFound, memory.ErrorBody{
+		Code:    "MEMORY_NOT_FOUND",
+		Message: "One or more memory ids were not found.",
+		Detail:  strings.Join(missing, ", "),
+	})
+	return false
+}
+
 // requireAdminEndpoints reports whether mutation routes may run, writing a
 // structured error when they are disabled.
 func (s *Server) requireAdminEndpoints(w http.ResponseWriter) bool {
@@ -109,6 +143,10 @@ func (s *Server) handleMemoryPin(w http.ResponseWriter, r *http.Request) {
 	patcher, errBody := s.memoryMutator()
 	if errBody != nil {
 		writeError(w, http.StatusNotImplemented, *errBody)
+		return
+	}
+
+	if !s.requireExistingMemories(w, r, ids) {
 		return
 	}
 
@@ -170,6 +208,10 @@ func (s *Server) handleMemoryCorrect(w http.ResponseWriter, r *http.Request) {
 	patcher, errBody := s.memoryMutator()
 	if errBody != nil {
 		writeError(w, http.StatusNotImplemented, *errBody)
+		return
+	}
+
+	if !s.requireExistingMemories(w, r, []string{memoryID}) {
 		return
 	}
 
@@ -249,6 +291,10 @@ func (s *Server) handleMemoryForget(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	actor := mutationActor(req.Actor)
+
+	if !s.requireExistingMemories(w, r, ids) {
+		return
+	}
 
 	if req.Hard {
 		deleter, ok := s.memoryStore.(memoryPointDeleter)
@@ -352,15 +398,23 @@ func (s *Server) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("X-Next-Offset", nextOffset)
-	w.WriteHeader(http.StatusOK)
-	encoder := json.NewEncoder(w)
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
 	for _, point := range points {
 		if err := encoder.Encode(point); err != nil {
+			writeError(w, http.StatusInternalServerError, memory.ErrorBody{
+				Code:    "EXPORT_FAILED",
+				Message: "Memory export failed while encoding results.",
+				Detail:  err.Error(),
+			})
 			return
 		}
 	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Next-Offset", nextOffset)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body.Bytes())
 }
 
 func (s *Server) recordMutation(record memory.MutationRecord) {

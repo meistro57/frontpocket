@@ -78,16 +78,21 @@ func runMemoryLoop(args []string) error {
 		return err
 	}
 
-	qdrant := store.NewQdrantMemoryStore(store.NewQdrantClient(cfg.Qdrant.URL), nil, cfg.Qdrant.Collection, cfg.Qdrant.VectorName, cfg.Qdrant.Distance, nil)
+	embedder, err := selectCLIEmbedder(cfg)
+	if err != nil {
+		return err
+	}
+	qdrant := store.NewQdrantMemoryStore(store.NewQdrantClient(cfg.Qdrant.URL), embedder, cfg.Qdrant.Collection, cfg.Qdrant.VectorName, cfg.Qdrant.Distance, nil)
 	harvester := memoryloop.NewMemoryHarvester(qdrant)
 	runner := memoryloop.Runner{
-		Harvester:   harvester,
-		Clusterer:   memoryloop.MemoryClusterer{MaxClusterSize: *clusterSize},
-		Extractor:   memoryloop.FactExtractor{},
-		Scout:       memoryloop.ContradictionScout{},
-		Timeline:    memoryloop.TimelineBuilder{},
-		Curator:     memoryloop.CanonCurator{},
-		ReviewQueue: memoryloop.NewFileReviewQueue(*queuePath),
+		Harvester:    harvester,
+		Clusterer:    memoryloop.MemoryClusterer{MaxClusterSize: *clusterSize},
+		Extractor:    memoryloop.FactExtractor{},
+		Scout:        memoryloop.ContradictionScout{},
+		Timeline:     memoryloop.TimelineBuilder{},
+		Curator:      memoryloop.CanonCurator{},
+		ReviewQueue:  memoryloop.NewFileReviewQueue(*queuePath),
+		CanonicalRef: qdrant,
 	}
 	result, err := runner.Run(context.Background(), memoryloop.HarvestFilter{
 		Project:              strings.TrimSpace(*project),

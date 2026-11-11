@@ -40,9 +40,10 @@ func (r Runner) Run(ctx context.Context, filter HarvestFilter, writeCandidates b
 	existingCanonical := make([]memory.SearchResult, 0)
 	if r.CanonicalRef != nil {
 		results, err := r.CanonicalRef.Search(ctx, memory.SearchRequest{Query: "memory canonical", Limit: 200, IncludeRejected: true})
-		if err == nil {
-			existingCanonical = results
+		if err != nil {
+			return LoopResult{}, err
 		}
+		existingCanonical = results
 	}
 	curated, skipped := r.Curator.Curate(candidates, existingCanonical)
 	if writeCandidates && r.ReviewQueue != nil {

@@ -49,6 +49,29 @@ func TestMemoryHarvesterLoadsBatches(t *testing.T) {
 	}
 }
 
+func TestMemoryHarvesterCanonicalOnlyKeepsCanonicalPoints(t *testing.T) {
+	source := &fakeSource{batches: [][]memory.MemoryPoint{{
+		{MemoryID: "raw_1"},
+		{MemoryID: "canon_1", Canonical: true},
+	}}}
+	harvester := NewMemoryHarvester(source)
+
+	var delivered []memory.MemoryPoint
+	count, err := harvester.Harvest(context.Background(), HarvestFilter{BatchSize: 10, CanonicalOnly: true}, func(points []memory.MemoryPoint) error {
+		delivered = append(delivered, points...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("harvest failed: %v", err)
+	}
+	if count != 1 || len(delivered) != 1 {
+		t.Fatalf("expected only the canonical point, got count=%d delivered=%#v", count, delivered)
+	}
+	if delivered[0].MemoryID != "canon_1" {
+		t.Fatalf("expected canon_1, got %q", delivered[0].MemoryID)
+	}
+}
+
 func TestRunnerDryRunDoesNotWriteQueue(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "proposed.json")
 	source := &fakeSource{batches: [][]memory.MemoryPoint{{samplePoint("m1", "user", "FrontPocket")}}}

@@ -95,6 +95,24 @@ func isEndpointUnsupported(err error) bool {
 	return statusErr.StatusCode == http.StatusNotFound || statusErr.StatusCode == http.StatusMethodNotAllowed
 }
 
+// isPermanentEmbeddingError reports whether retrying one input at a time
+// cannot help: the request was rejected for auth, permission, or rate-limit
+// reasons rather than because of batching.
+func isPermanentEmbeddingError(err error) bool {
+	var statusErr *embedStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	switch statusErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden,
+		http.StatusNotFound, http.StatusMethodNotAllowed,
+		http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
+}
+
 func isRetryableEmbeddingError(err error) bool {
 	if err == nil {
 		return false

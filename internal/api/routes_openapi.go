@@ -412,6 +412,7 @@ func (s *Server) openAPISpec() map[string]any {
 				"post": map[string]any{
 					"operationId": "ingestChatMemory",
 					"summary":     "Ingest normalized chat records",
+					"description": "Accepts up to MAX_INGEST_RECORDS records and MAX_INGEST_CHARACTERS of text per request; larger payloads return 413 before any embedding work.",
 					"requestBody": map[string]any{
 						"required": true,
 						"content": map[string]any{
@@ -431,6 +432,7 @@ func (s *Server) openAPISpec() map[string]any {
 						},
 						"400": map[string]any{"$ref": "#/components/responses/ValidationError"},
 						"401": map[string]any{"$ref": "#/components/responses/UnauthorizedError"},
+						"413": map[string]any{"description": "Ingest payload exceeds the configured record or character limit."},
 						"500": map[string]any{"$ref": "#/components/responses/InternalServerError"},
 					},
 				},

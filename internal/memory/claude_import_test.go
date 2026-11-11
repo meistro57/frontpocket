@@ -76,6 +76,44 @@ func TestNormalizePotentiallyEscapedTextLeavesPlainTextIntact(t *testing.T) {
 	}
 }
 
+func TestParseClaudeMemoriesReadsEveryAccountRow(t *testing.T) {
+	dir := t.TempDir()
+	writeJSON(t, filepath.Join(dir, "memories.json"), []map[string]any{
+		{
+			"account_uuid":         "acct_1",
+			"conversations_memory": "first account memory",
+			"project_memories":     map[string]string{"proj_1": "first project memory"},
+		},
+		{
+			"account_uuid":         "acct_2",
+			"conversations_memory": "second account memory",
+		},
+	})
+
+	records, count, err := parseClaudeMemories(dir, "imp", "", "claude", map[string]claudeProjectFile{})
+	if err != nil {
+		t.Fatalf("parseClaudeMemories failed: %v", err)
+	}
+	if count != 3 || len(records) != 3 {
+		t.Fatalf("expected 3 records from 2 accounts, got count=%d records=%d", count, len(records))
+	}
+
+	texts := make(map[string]bool, len(records))
+	conversationIDs := make(map[string]bool, len(records))
+	for _, record := range records {
+		texts[record.Text] = true
+		if conversationIDs[record.ConversationID] {
+			t.Fatalf("duplicate conversation id %q", record.ConversationID)
+		}
+		conversationIDs[record.ConversationID] = true
+	}
+	for _, want := range []string{"first account memory", "second account memory", "first project memory"} {
+		if !texts[want] {
+			t.Fatalf("missing memory %q in %#v", want, texts)
+		}
+	}
+}
+
 func writeJSON(t *testing.T, path string, value any) {
 	t.Helper()
 	payload, err := json.Marshal(value)

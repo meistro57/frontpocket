@@ -1082,12 +1082,18 @@ func (s *QdrantMemoryStore) setCachedUnfilteredAggregation(entry unfilteredAggre
 		return
 	}
 	s.unfilteredAggCacheMu.Lock()
+	now := time.Now()
+	for key, cached := range s.unfilteredAggCacheByColl {
+		if now.After(cached.expiresAt) {
+			delete(s.unfilteredAggCacheByColl, key)
+		}
+	}
 	s.unfilteredAggCacheByColl[s.collection] = unfilteredAggregationCacheEntry{
 		byKind:    copyIntMap(entry.byKind),
 		bySpeaker: copyIntMap(entry.bySpeaker),
 		byProject: copyIntMap(entry.byProject),
 		topTitles: append([]string(nil), entry.topTitles...),
-		expiresAt: time.Now().Add(s.distinctCacheTTL),
+		expiresAt: now.Add(s.distinctCacheTTL),
 	}
 	s.unfilteredAggCacheMu.Unlock()
 }
@@ -1245,9 +1251,15 @@ func (s *QdrantMemoryStore) setDistinctFieldValues(cacheKey string, values []str
 		return
 	}
 	copied := append([]string(nil), values...)
+	now := time.Now()
 	s.distinctCacheMu.Lock()
-	s.distinctFieldVals[cacheKey] = distinctFieldCacheEntry{values: copied, expiresAt: time.Now().Add(s.distinctCacheTTL)}
-	s.distinctCacheMu.Unlock()
+	defer s.distinctCacheMu.Unlock()
+	for key, cached := range s.distinctFieldVals {
+		if now.After(cached.expiresAt) {
+			delete(s.distinctFieldVals, key)
+		}
+	}
+	s.distinctFieldVals[cacheKey] = distinctFieldCacheEntry{values: copied, expiresAt: now.Add(s.distinctCacheTTL)}
 }
 
 func (s *QdrantMemoryStore) rememberDistinctFieldValues(field string, values []string) {

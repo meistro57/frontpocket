@@ -46,6 +46,8 @@ type SecurityConfig struct {
 
 type LimitsConfig struct {
 	MaxRequestBodyBytes int64
+	MaxIngestRecords    int
+	MaxIngestCharacters int
 	RateLimitPerMinute  int
 	RateLimitBurst      int
 }
@@ -181,6 +183,8 @@ func Load() (Config, error) {
 		},
 		Limits: LimitsConfig{
 			MaxRequestBodyBytes: getEnvInt64("MAX_REQUEST_BODY_BYTES", 8<<20),
+			MaxIngestRecords:    getEnvInt("MAX_INGEST_RECORDS", 2000),
+			MaxIngestCharacters: getEnvInt("MAX_INGEST_CHARACTERS", 2_000_000),
 			RateLimitPerMinute:  getEnvInt("RATE_LIMIT_PER_MINUTE", 0),
 			RateLimitBurst:      getEnvInt("RATE_LIMIT_BURST", 20),
 		},
@@ -284,6 +288,12 @@ func Load() (Config, error) {
 func (c Config) Validate() error {
 	if c.Limits.MaxRequestBodyBytes <= 0 {
 		return errors.New("MAX_REQUEST_BODY_BYTES must be greater than 0")
+	}
+	if c.Limits.MaxIngestRecords < 0 {
+		return errors.New("MAX_INGEST_RECORDS cannot be negative")
+	}
+	if c.Limits.MaxIngestCharacters < 0 {
+		return errors.New("MAX_INGEST_CHARACTERS cannot be negative")
 	}
 	if c.Limits.RateLimitPerMinute < 0 {
 		return errors.New("RATE_LIMIT_PER_MINUTE cannot be negative")

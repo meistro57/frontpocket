@@ -78,7 +78,7 @@ func (e *OpenRouterEmbedder) embedBatchWithRetry(ctx context.Context, texts []st
 		}
 	}
 
-	if allowSplit && len(texts) > 1 {
+	if allowSplit && len(texts) > 1 && !isPermanentEmbeddingError(lastErr) {
 		vectors, err := e.embedBatchSerial(ctx, texts)
 		if err == nil {
 			return vectors, nil

@@ -102,6 +102,24 @@ func TestOpenRouterEmbedderRetriesTimeoutError(t *testing.T) {
 	}
 }
 
+func TestOpenRouterEmbedderDoesNotSplitOnAuthError(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer srv.Close()
+
+	embedder := NewOpenRouterEmbedder(srv.URL, "google/gemini-embedding-2-preview", "bad-key", "", "", 0)
+	if _, err := embedder.EmbedBatch(context.Background(), []string{"one", "two"}); err == nil {
+		t.Fatal("expected auth error")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected no serial retries after auth failure, got %d calls", got)
+	}
+}
+
 func TestOpenRouterEmbedderFallsBackToSerialForBatchMismatch(t *testing.T) {
 	var batchCalls int32
 	var singleCalls int32

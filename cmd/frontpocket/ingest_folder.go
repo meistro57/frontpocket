@@ -172,26 +172,33 @@ func runIngestFolder(args []string) error {
 			Collection:     cfg.Qdrant.Collection,
 			EmbeddingModel: ingestor.Embedder.ModelName(),
 		})
-		if jErr == nil {
-			journal = j
-			ingestor.Journal = j
-			if resumed {
-				fmt.Printf("resume: continuing from record %d (journal %s)\n", j.LastRecordIndex()+1, resumePath)
-			} else {
-				fmt.Printf("resume: tracking progress in %s\n", resumePath)
-			}
+		if jErr != nil {
+			return fmt.Errorf("open resume journal %s: %w", resumePath, jErr)
+		}
+		journal = j
+		ingestor.Journal = j
+		if resumed {
+			fmt.Printf("resume: continuing from record %d (journal %s)\n", j.LastRecordIndex()+1, resumePath)
+		} else {
+			fmt.Printf("resume: tracking progress in %s\n", resumePath)
 		}
 	}
 
 	integrityFilter := buildCLIIngestIntegrityFilter(strings.TrimSpace(ingestor.SourceType), strings.TrimSpace(proj), strings.TrimSpace(*aiProvider))
-	baselineCount, _ := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	baselineCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	if err != nil {
+		return fmt.Errorf("count existing memory points: %w", err)
+	}
 
 	points, err := ingestor.Ingest(context.Background(), result.Records)
 	if err != nil {
 		return fmt.Errorf("ingest records to storage: %w", err)
 	}
 
-	finalCount, _ := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	finalCount, err := qdrantClient.CountPoints(context.Background(), cfg.Qdrant.Collection, integrityFilter)
+	if err != nil {
+		return fmt.Errorf("count memory points after ingest: %w", err)
+	}
 	actualAdded := finalCount - baselineCount
 	fmt.Printf("storage write: inserted %d memory points into %s (embedded chunks: %d, collection total for project: %d, newly added: %d)\n",
 		len(points.Points), cfg.Qdrant.Collection, chunksEmbedded, finalCount, actualAdded)

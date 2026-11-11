@@ -47,6 +47,11 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body, ok := s.checkIngestSize(records); ok {
+		writeError(w, http.StatusRequestEntityTooLarge, body)
+		return
+	}
+
 	ingestor := s.ingestor
 	if strings.TrimSpace(req.SourceTitle) != "" {
 		ingestor.SourceTitle = req.SourceTitle
@@ -80,6 +85,32 @@ func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
 		Persisted:     memory.DegradedStatus(storeStatus) == nil,
 		Store:         memory.DegradedStatus(storeStatus),
 	})
+}
+
+// checkIngestSize rejects oversized ingest requests before any chunking or
+// embedding work happens, so oversized payloads cost only the body read.
+func (s *Server) checkIngestSize(records []memory.MessageRecord) (memory.ErrorBody, bool) {
+	if max := s.cfg.Limits.MaxIngestRecords; max > 0 && len(records) > max {
+		return memory.ErrorBody{
+			Code:    "INGEST_TOO_LARGE",
+			Message: fmt.Sprintf("Ingest is limited to %d records per request.", max),
+			Detail:  fmt.Sprintf("Received %d records.", len(records)),
+		}, true
+	}
+	if max := s.cfg.Limits.MaxIngestCharacters; max > 0 {
+		total := 0
+		for _, record := range records {
+			total += len(record.Text)
+			if total > max {
+				return memory.ErrorBody{
+					Code:    "INGEST_TOO_LARGE",
+					Message: fmt.Sprintf("Ingest is limited to %d characters of text per request.", max),
+					Detail:  "Split the import into smaller requests or raise MAX_INGEST_CHARACTERS.",
+				}, true
+			}
+		}
+	}
+	return memory.ErrorBody{}, false
 }
 
 func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +456,9 @@ func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	r = r.WithContext(sessionCtx)
+
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
 		writeError(w, http.StatusBadRequest, memory.ErrorBody{
@@ -444,7 +478,7 @@ func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, memory.SessionResponse{Found: found, State: state})
+		writeJSON(w, http.StatusOK, memory.SessionResponse{Found: found, State: state, Store: memory.DegradedStatus(storeStatus)})
 		return
 	}
 
@@ -474,7 +508,7 @@ func (s *Server) handleMemorySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: true, State: &state})
+	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: true, State: &state, Store: memory.DegradedStatus(storeStatus)})
 }
 
 func (s *Server) handleMemorySessionDelete(w http.ResponseWriter, r *http.Request) {
@@ -487,6 +521,9 @@ func (s *Server) handleMemorySessionDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	sessionCtx, storeStatus := memory.WithStoreStatus(r.Context())
+	r = r.WithContext(sessionCtx)
+
 	if err := s.deleteSessionState(r, sessionID); err != nil {
 		writeError(w, http.StatusInternalServerError, memory.ErrorBody{
 			Code:    "SESSION_FAILED",
@@ -496,7 +533,7 @@ func (s *Server) handleMemorySessionDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: false})
+	writeJSON(w, http.StatusOK, memory.SessionResponse{Found: false, Store: memory.DegradedStatus(storeStatus)})
 }
 
 func statsFiltersFromQuery(r *http.Request) memory.SearchFilters {
@@ -692,7 +729,13 @@ func (s *Server) getCachedMemoryStats(cacheKey string) (memory.MemoryStats, bool
 	s.statsCacheMu.RLock()
 	entry, ok := s.statsCache[cacheKey]
 	s.statsCacheMu.RUnlock()
-	if !ok || now.After(entry.expiresAt) {
+	if !ok {
+		return memory.MemoryStats{}, false
+	}
+	if now.After(entry.expiresAt) {
+		s.statsCacheMu.Lock()
+		delete(s.statsCache, cacheKey)
+		s.statsCacheMu.Unlock()
 		return memory.MemoryStats{}, false
 	}
 	return entry.stats, true
@@ -712,10 +755,23 @@ func (s *Server) setCachedMemoryStats(cacheKey string, stats memory.MemoryStats)
 	if s.statsCacheTTL <= 0 {
 		return
 	}
+	now := time.Now()
 	s.statsCacheMu.Lock()
+	defer s.statsCacheMu.Unlock()
 	// Keep a short-lived in-process cache so repeated stats requests do not recompute.
-	s.statsCache[cacheKey] = memoryStatsCacheEntry{stats: stats, expiresAt: time.Now().Add(s.statsCacheTTL)}
-	s.statsCacheMu.Unlock()
+	// Filter combinations are client-controlled, so prune and cap the map.
+	for key, entry := range s.statsCache {
+		if now.After(entry.expiresAt) {
+			delete(s.statsCache, key)
+		}
+	}
+	if _, exists := s.statsCache[cacheKey]; !exists && len(s.statsCache) >= maxStatsCacheEntries {
+		for key := range s.statsCache {
+			delete(s.statsCache, key)
+			break
+		}
+	}
+	s.statsCache[cacheKey] = memoryStatsCacheEntry{stats: stats, expiresAt: now.Add(s.statsCacheTTL)}
 }
 
 func (s *Server) sessionStateKey(sessionID string) string {
@@ -730,25 +786,55 @@ func (s *Server) getSessionState(r *http.Request, sessionID string) (*memory.Ses
 	key := s.sessionStateKey(sessionID)
 	if s.redis != nil {
 		cached, found, err := s.redis.Get(r.Context(), key)
+		if err != nil {
+			memory.MarkStoreDegraded(r.Context(), err)
+		}
 		if err == nil && found {
 			var state memory.SessionState
 			if unmarshalErr := json.Unmarshal([]byte(cached), &state); unmarshalErr == nil {
-				s.sessionFallbackMu.Lock()
-				s.sessionFallback[sessionID] = state
-				s.sessionFallbackMu.Unlock()
+				s.setSessionFallback(state, s.defaultSessionTTL)
 				return &state, true, nil
 			}
 		}
 	}
 
-	s.sessionFallbackMu.RLock()
-	fallbackState, ok := s.sessionFallback[sessionID]
-	s.sessionFallbackMu.RUnlock()
+	s.sessionFallbackMu.Lock()
+	entry, ok := s.sessionFallback[sessionID]
+	if ok && time.Now().After(entry.expiresAt) {
+		delete(s.sessionFallback, sessionID)
+		ok = false
+	}
+	s.sessionFallbackMu.Unlock()
 	if !ok {
 		return nil, false, nil
 	}
-	state := fallbackState
+	state := entry.state
 	return &state, true, nil
+}
+
+func (s *Server) setSessionFallback(state memory.SessionState, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = s.defaultSessionTTL
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	now := time.Now()
+
+	s.sessionFallbackMu.Lock()
+	defer s.sessionFallbackMu.Unlock()
+	for id, entry := range s.sessionFallback {
+		if now.After(entry.expiresAt) {
+			delete(s.sessionFallback, id)
+		}
+	}
+	if _, exists := s.sessionFallback[state.SessionID]; !exists && len(s.sessionFallback) >= maxSessionFallbackEntries {
+		for id := range s.sessionFallback {
+			delete(s.sessionFallback, id)
+			break
+		}
+	}
+	s.sessionFallback[state.SessionID] = sessionFallbackEntry{state: state, expiresAt: now.Add(ttl)}
 }
 
 func (s *Server) setSessionState(r *http.Request, state memory.SessionState, ttlSeconds int) error {
@@ -757,14 +843,15 @@ func (s *Server) setSessionState(r *http.Request, state memory.SessionState, ttl
 		return err
 	}
 
-	s.sessionFallbackMu.Lock()
-	s.sessionFallback[state.SessionID] = state
-	s.sessionFallbackMu.Unlock()
+	ttl := time.Duration(ttlSeconds) * time.Second
+	s.setSessionFallback(state, ttl)
 
 	if s.redis == nil {
 		return nil
 	}
-	_ = s.redis.SetEX(r.Context(), s.sessionStateKey(state.SessionID), string(payload), time.Duration(ttlSeconds)*time.Second)
+	if err := s.redis.SetEX(r.Context(), s.sessionStateKey(state.SessionID), string(payload), ttl); err != nil {
+		memory.MarkStoreDegraded(r.Context(), err)
+	}
 	return nil
 }
 
@@ -776,7 +863,9 @@ func (s *Server) deleteSessionState(r *http.Request, sessionID string) error {
 	if s.redis == nil {
 		return nil
 	}
-	_ = s.redis.Del(r.Context(), s.sessionStateKey(sessionID))
+	if err := s.redis.Del(r.Context(), s.sessionStateKey(sessionID)); err != nil {
+		memory.MarkStoreDegraded(r.Context(), err)
+	}
 	return nil
 }
 

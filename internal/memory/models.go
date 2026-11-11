@@ -272,6 +272,7 @@ type SessionState struct {
 type SessionResponse struct {
 	Found bool          `json:"found"`
 	State *SessionState `json:"state,omitempty"`
+	Store *StoreStatus  `json:"store,omitempty"`
 }
 
 // ChatSessionDeleteResponse reports the outcome of clearing a MindDrill chat

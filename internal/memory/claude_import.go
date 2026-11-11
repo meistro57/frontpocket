@@ -285,58 +285,67 @@ func parseClaudeMemories(rootDir, importID, projectLabel, aiProvider string, pro
 		return nil, 0, nil
 	}
 
-	records := make([]NormalizedMemoryRecord, 0, 1+len(rows[0].ProjectMemories))
-	first := rows[0]
+	records := make([]NormalizedMemoryRecord, 0, len(rows))
 	now := time.Now().UTC().Format(time.RFC3339)
-	if text := strings.TrimSpace(first.ConversationsMemory); text != "" {
-		records = append(records, NormalizedMemoryRecord{
-			SourcePlatform:    "claude",
-			SourceType:        "chat_export_folder",
-			SourceFile:        "memories.json",
-			ImportID:          importID,
-			ConversationID:    "claude_conversations_memory",
-			ConversationTitle: "Claude Conversations Memory",
-			Timestamp:         now,
-			Speaker:           "assistant",
-			Role:              "assistant",
-			Project:           strings.TrimSpace(projectLabel),
-			MemoryKind:        "ai_generated_synthesis",
-			Tags:              []string{"claude", "synthesis", "conversations_memory"},
-			Text:              text,
-			AIProvider:        aiProvider,
-		})
-	}
+	for rowIdx, row := range rows {
+		conversationID := "claude_conversations_memory"
+		if len(rows) > 1 {
+			conversationID = fmt.Sprintf("claude_conversations_memory_%d", rowIdx)
+		}
+		if text := strings.TrimSpace(row.ConversationsMemory); text != "" {
+			records = append(records, NormalizedMemoryRecord{
+				SourcePlatform:    "claude",
+				SourceType:        "chat_export_folder",
+				SourceFile:        "memories.json",
+				ImportID:          importID,
+				ConversationID:    conversationID,
+				ConversationTitle: "Claude Conversations Memory",
+				Timestamp:         now,
+				Speaker:           "assistant",
+				Role:              "assistant",
+				Project:           strings.TrimSpace(projectLabel),
+				MemoryKind:        "ai_generated_synthesis",
+				Tags:              []string{"claude", "synthesis", "conversations_memory"},
+				Text:              text,
+				AIProvider:        aiProvider,
+			})
+		}
 
-	projectIDs := make([]string, 0, len(first.ProjectMemories))
-	for projectID := range first.ProjectMemories {
-		projectIDs = append(projectIDs, projectID)
-	}
-	sort.Strings(projectIDs)
-	for _, projectID := range projectIDs {
-		text := strings.TrimSpace(first.ProjectMemories[projectID])
-		if text == "" {
-			continue
+		projectIDs := make([]string, 0, len(row.ProjectMemories))
+		for projectID := range row.ProjectMemories {
+			projectIDs = append(projectIDs, projectID)
 		}
-		projectName := strings.TrimSpace(projectByID[projectID].Name)
-		if projectName == "" {
-			projectName = projectID
+		sort.Strings(projectIDs)
+		for _, projectID := range projectIDs {
+			text := strings.TrimSpace(row.ProjectMemories[projectID])
+			if text == "" {
+				continue
+			}
+			projectName := strings.TrimSpace(projectByID[projectID].Name)
+			if projectName == "" {
+				projectName = projectID
+			}
+			projectConversationID := strings.TrimSpace(projectID)
+			if len(rows) > 1 {
+				projectConversationID = fmt.Sprintf("%s_%d", projectConversationID, rowIdx)
+			}
+			records = append(records, NormalizedMemoryRecord{
+				SourcePlatform:    "claude",
+				SourceType:        "chat_export_folder",
+				SourceFile:        "memories.json",
+				ImportID:          importID,
+				ConversationID:    projectConversationID,
+				ConversationTitle: "Claude Project Memory: " + projectName,
+				Timestamp:         now,
+				Speaker:           "assistant",
+				Role:              "assistant",
+				Project:           projectName,
+				MemoryKind:        "ai_generated_synthesis",
+				Tags:              []string{"claude", "synthesis", "project_memory", strings.TrimSpace(projectID)},
+				Text:              text,
+				AIProvider:        aiProvider,
+			})
 		}
-		records = append(records, NormalizedMemoryRecord{
-			SourcePlatform:    "claude",
-			SourceType:        "chat_export_folder",
-			SourceFile:        "memories.json",
-			ImportID:          importID,
-			ConversationID:    strings.TrimSpace(projectID),
-			ConversationTitle: "Claude Project Memory: " + projectName,
-			Timestamp:         now,
-			Speaker:           "assistant",
-			Role:              "assistant",
-			Project:           projectName,
-			MemoryKind:        "ai_generated_synthesis",
-			Tags:              []string{"claude", "synthesis", "project_memory", strings.TrimSpace(projectID)},
-			Text:              text,
-			AIProvider:        aiProvider,
-		})
 	}
 	return records, len(records), nil
 }

@@ -433,23 +433,32 @@ func (s *Server) deleteMindDrillChatSession(r *http.Request) (memory.ChatSession
 		}, http.StatusInternalServerError
 	}
 
-	if qStore, ok := s.mindDrillStore.(*store.QdrantMemoryStore); ok {
-		if err := qStore.DeleteByFilters(r.Context(), memory.SearchFilters{ConversationID: sessionID}); err != nil {
+	memoryCleared := false
+	switch chatStore := s.mindDrillStore.(type) {
+	case *store.QdrantMemoryStore:
+		if err := chatStore.DeleteByFilters(r.Context(), memory.SearchFilters{ConversationID: sessionID}); err != nil {
 			return memory.ChatSessionDeleteResponse{}, &memory.ErrorBody{
 				Code:    "MINDDRILL_SESSION_DELETE_FAILED",
 				Message: "MindDrill session memory delete failed.",
 				Detail:  err.Error(),
 			}, http.StatusInternalServerError
 		}
-	}
-	if memStore, ok := s.mindDrillStore.(*memory.InMemoryStore); ok {
-		_ = memStore.DeleteByFilters(memory.SearchFilters{ConversationID: sessionID})
+		memoryCleared = true
+	case *memory.InMemoryStore:
+		if err := chatStore.DeleteByFilters(memory.SearchFilters{ConversationID: sessionID}); err != nil {
+			return memory.ChatSessionDeleteResponse{}, &memory.ErrorBody{
+				Code:    "MINDDRILL_SESSION_DELETE_FAILED",
+				Message: "MindDrill session memory delete failed.",
+				Detail:  err.Error(),
+			}, http.StatusInternalServerError
+		}
+		memoryCleared = true
 	}
 
 	return memory.ChatSessionDeleteResponse{
 		SessionID:      sessionID,
 		SessionCleared: true,
-		MemoryCleared:  true,
+		MemoryCleared:  memoryCleared,
 	}, nil, http.StatusOK
 }
 

@@ -43,7 +43,7 @@ type Server struct {
 	statsCacheMu      sync.RWMutex
 	statsCache        map[string]memoryStatsCacheEntry
 	sessionFallbackMu sync.RWMutex
-	sessionFallback   map[string]memory.SessionState
+	sessionFallback   map[string]sessionFallbackEntry
 	defaultSessionTTL time.Duration
 	reviewQueue       *memoryloop.FileReviewQueue
 	toolRegistry      *loadout.Registry
@@ -55,6 +55,19 @@ type memoryStatsCacheEntry struct {
 	stats     memory.MemoryStats
 	expiresAt time.Time
 }
+
+type sessionFallbackEntry struct {
+	state     memory.SessionState
+	expiresAt time.Time
+}
+
+// maxSessionFallbackEntries bounds the in-process session map so unique
+// session IDs cannot grow memory without limit.
+const maxSessionFallbackEntries = 1024
+
+// maxStatsCacheEntries bounds the stats cache keyed by client-supplied
+// filter combinations.
+const maxStatsCacheEntries = 256
 
 func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
@@ -198,7 +211,7 @@ func NewServer(cfg config.Config, logger *slog.Logger) (*Server, error) {
 		statsCacheTTL:     45 * time.Second,
 		statsQueryTimeout: 4 * time.Second,
 		statsCache:        make(map[string]memoryStatsCacheEntry),
-		sessionFallback:   make(map[string]memory.SessionState),
+		sessionFallback:   make(map[string]sessionFallbackEntry),
 		defaultSessionTTL: time.Hour,
 		reviewQueue:       memoryloop.NewFileReviewQueue(queuePath),
 		toolRegistry:      toolRegistry,

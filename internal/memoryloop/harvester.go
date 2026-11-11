@@ -47,12 +47,25 @@ func (h *MemoryHarvester) Harvest(ctx context.Context, filter HarvestFilter, onB
 			Project:    filter.Project,
 			Speaker:    filter.Speaker,
 			MemoryKind: filter.MemoryKind,
-		}, filter.Since, filter.Until, filter.IncludeExistingCanon)
+		}, filter.Since, filter.Until, filter.IncludeExistingCanon || filter.CanonicalOnly)
 		if err != nil {
 			return processed, err
 		}
+		if filter.CanonicalOnly {
+			kept := points[:0]
+			for _, point := range points {
+				if point.Canonical {
+					kept = append(kept, point)
+				}
+			}
+			points = kept
+		}
 		if len(points) == 0 {
-			break
+			if nextCursor == "" || nextCursor == cursor {
+				break
+			}
+			cursor = nextCursor
+			continue
 		}
 		if err := onBatch(points); err != nil {
 			return processed, err

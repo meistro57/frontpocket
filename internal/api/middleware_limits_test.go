@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +93,40 @@ func TestRateLimitMiddlewareSeparatesClients(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Fatalf("request %d from a distinct client should be allowed, got %d", i, rr.Code)
 		}
+	}
+}
+
+func TestRateLimitIgnoresClientSuppliedKeyHeader(t *testing.T) {
+	handler := RateLimitMiddleware(1, 1, metrics.NewRegistry(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	first := httptest.NewRequest(http.MethodGet, "/memory/search", nil)
+	first.RemoteAddr = "203.0.113.9:1111"
+	first.Header.Set("X-FrontPocket-Key", "key-a")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, first)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected first request to pass, got %d", rr.Code)
+	}
+
+	second := httptest.NewRequest(http.MethodGet, "/memory/search", nil)
+	second.RemoteAddr = "203.0.113.9:2222"
+	second.Header.Set("X-FrontPocket-Key", "key-b")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, second)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rotating the key header to stay rate limited, got %d", rr.Code)
+	}
+}
+
+func TestRateLimiterBucketMapIsCapped(t *testing.T) {
+	limiter := newRateLimiter(60, 1, nil)
+	for i := 0; i < maxRateLimitBuckets+50; i++ {
+		limiter.allow(fmt.Sprintf("client-%d", i))
+	}
+	if len(limiter.buckets) > maxRateLimitBuckets {
+		t.Fatalf("expected at most %d buckets, got %d", maxRateLimitBuckets, len(limiter.buckets))
 	}
 }
 

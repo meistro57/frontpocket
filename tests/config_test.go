@@ -23,6 +23,22 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestIngestLimitDefaults(t *testing.T) {
+	t.Setenv("EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected config to load, got error: %v", err)
+	}
+	if cfg.Limits.MaxIngestRecords != 2000 {
+		t.Fatalf("expected default MAX_INGEST_RECORDS 2000, got %d", cfg.Limits.MaxIngestRecords)
+	}
+	if cfg.Limits.MaxIngestCharacters != 2_000_000 {
+		t.Fatalf("expected default MAX_INGEST_CHARACTERS 2000000, got %d", cfg.Limits.MaxIngestCharacters)
+	}
+}
+
 func TestOpenAIProviderRequiresAPIKey(t *testing.T) {
 	t.Setenv("EMBEDDING_PROVIDER", "openai")
 	t.Setenv("OPENAI_API_KEY", "")

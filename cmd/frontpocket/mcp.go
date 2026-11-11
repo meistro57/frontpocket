@@ -25,6 +25,13 @@ type mcpServer struct {
 	client       *http.Client
 }
 
+// The MCP transport is local stdio, but the header and the proxied API
+// response are still client-controlled sizes, so both are capped.
+const (
+	maxRPCPayloadBytes  = 8 << 20
+	maxMCPResponseBytes = 32 << 20
+)
+
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id,omitempty"`
@@ -283,9 +290,12 @@ func (s *mcpServer) callAPI(method, path string, payload map[string]any) (mcpToo
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: maxMCPResponseBytes + 1})
 	if err != nil {
 		return mcpToolResult{}, err
+	}
+	if int64(len(data)) > maxMCPResponseBytes {
+		return mcpToolResult{}, fmt.Errorf("frontpocket api response exceeded %d bytes", maxMCPResponseBytes)
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
@@ -332,6 +342,9 @@ func readRPCPayload(reader *bufio.Reader) ([]byte, error) {
 	}
 	if contentLength < 0 {
 		return nil, errors.New("missing content-length header")
+	}
+	if contentLength > maxRPCPayloadBytes {
+		return nil, fmt.Errorf("rpc payload of %d bytes exceeds the %d byte limit", contentLength, maxRPCPayloadBytes)
 	}
 	payload := make([]byte, contentLength)
 	if _, err := io.ReadFull(reader, payload); err != nil {

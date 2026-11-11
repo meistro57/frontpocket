@@ -108,8 +108,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	return false
 }
 
-// rateLimiter is a per-client token bucket. Clients are keyed by API key when
-// present, otherwise by remote address.
+// rateLimiter is a per-client token bucket. Clients are keyed by remote
+// address only: the limiter runs before authentication, so a client-supplied
+// key cannot be trusted as a bucket identity.
 type rateLimiter struct {
 	mu       sync.Mutex
 	buckets  map[string]*bucket
@@ -140,12 +141,11 @@ func newRateLimiter(perMinute, burst int, registry *metrics.Registry) *rateLimit
 	}
 }
 
+// maxRateLimitBuckets bounds the bucket map so spoofed or churning client
+// addresses cannot grow it without limit.
+const maxRateLimitBuckets = 10000
+
 func rateLimitKey(r *http.Request) string {
-	for _, header := range []string{"X-FrontPocket-Key", "Authorization"} {
-		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
-			return header + ":" + value
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -170,6 +170,12 @@ func (l *rateLimiter) allow(key string) bool {
 
 	entry, ok := l.buckets[key]
 	if !ok {
+		if len(l.buckets) >= maxRateLimitBuckets {
+			for bucketKey := range l.buckets {
+				delete(l.buckets, bucketKey)
+				break
+			}
+		}
 		entry = &bucket{tokens: l.burst, lastSeen: now}
 		l.buckets[key] = entry
 	}

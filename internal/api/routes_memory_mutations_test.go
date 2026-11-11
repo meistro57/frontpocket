@@ -213,6 +213,41 @@ func TestMemoryMutationsBlockedWhenAdminDisabled(t *testing.T) {
 	}
 }
 
+type idCheckingStore struct {
+	mutatingStore
+	known map[string]bool
+}
+
+func (s *idCheckingStore) MemoryIDsExist(_ context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = s.known[id]
+	}
+	return out, nil
+}
+
+func TestMemoryPinRejectsUnknownIDs(t *testing.T) {
+	store := &idCheckingStore{known: map[string]bool{"m1": true}}
+	s := newMutationTestServer(t, store, "")
+
+	rr := httptest.NewRecorder()
+	s.handleMemoryPin(rr, httptest.NewRequest(http.MethodPost, "/memory/pin", strings.NewReader(`{"memory_ids":["m1","ghost"]}`)))
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown memory id, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(store.patchedIDs) != 0 {
+		t.Fatalf("expected no payload writes for unknown ids, got %#v", store.patchedIDs)
+	}
+	var envelope memory.ErrorEnvelope
+	if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode error body failed: %v", err)
+	}
+	if envelope.Error.Code != "MEMORY_NOT_FOUND" {
+		t.Fatalf("expected MEMORY_NOT_FOUND, got %q", envelope.Error.Code)
+	}
+}
+
 func TestMemoryExportStreamsNDJSON(t *testing.T) {
 	store := &mutatingStore{points: []memory.MemoryPoint{
 		{MemoryID: "m1", Text: "first", SourceQuote: "first", Timestamp: time.Now().UTC()},

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meistro57/frontpocket/internal/config"
 	"github.com/meistro57/frontpocket/internal/memory"
 )
 
@@ -145,4 +146,28 @@ func (s *stubMemoryStore) Stats(ctx context.Context, _ memory.SearchFilters) (me
 		return memory.MemoryStats{}, s.statsErr
 	}
 	return s.stats, nil
+}
+
+func TestCheckIngestSizeRejectsTooManyRecords(t *testing.T) {
+	s := &Server{cfg: config.Config{Limits: config.LimitsConfig{MaxIngestRecords: 2}}}
+	records := []memory.MessageRecord{{Text: "a"}, {Text: "b"}, {Text: "c"}}
+
+	body, tooLarge := s.checkIngestSize(records)
+	if !tooLarge {
+		t.Fatal("expected oversized record batch to be rejected")
+	}
+	if body.Code != "INGEST_TOO_LARGE" {
+		t.Fatalf("unexpected error code %q", body.Code)
+	}
+}
+
+func TestCheckIngestSizeRejectsTooManyCharacters(t *testing.T) {
+	s := &Server{cfg: config.Config{Limits: config.LimitsConfig{MaxIngestCharacters: 10}}}
+
+	if _, tooLarge := s.checkIngestSize([]memory.MessageRecord{{Text: "12345"}, {Text: "67890"}}); tooLarge {
+		t.Fatal("expected input at the character limit to pass")
+	}
+	if _, tooLarge := s.checkIngestSize([]memory.MessageRecord{{Text: "12345"}, {Text: "678901"}}); !tooLarge {
+		t.Fatal("expected oversized text to be rejected")
+	}
 }
