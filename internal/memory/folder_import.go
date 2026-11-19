@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -76,27 +77,42 @@ func ParseFolder(ctx context.Context, folderPath string, opts FolderImportOption
 		opts.AIProvider = "frontpocket"
 	}
 
-	entries, err := os.ReadDir(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("read directory: %w", err)
-	}
-
 	var targetFiles []string
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
+	filesScanned := 0
+	err = filepath.WalkDir(absPath, func(currentPath string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if currentPath == absPath {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		filesScanned++
+		if d.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(d.Name()))
 		if isSupportedExtension(ext) {
-			targetFiles = append(targetFiles, filepath.Join(absPath, e.Name()))
+			targetFiles = append(targetFiles, currentPath)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk directory: %w", err)
 	}
 	sort.Strings(targetFiles)
 
 	result := &FolderImportResult{
 		SourcePath:   absPath,
 		Project:      opts.Project,
-		FilesScanned: len(entries),
+		FilesScanned: filesScanned,
 	}
 
 	if opts.Limit > 0 && len(targetFiles) > opts.Limit {
@@ -184,6 +200,15 @@ func ParseFolder(ctx context.Context, folderPath string, opts FolderImportOption
 			continue
 		}
 
+		// Folder ingest conversation IDs now come from the file's relative path
+		// (not just basename stem). Older folder-ingest runs could silently miss
+		// same-stem files across directories due to ID collisions, so re-ingesting
+		// older trees may intentionally add previously dropped content.
+		conversationID := folderConversationIDFromPath(absPath, file)
+		for idx := range fileRecords {
+			fileRecords[idx].ConversationID = conversationID
+		}
+
 		result.FilesProcessed++
 		result.Records = append(result.Records, fileRecords...)
 	}
@@ -241,6 +266,26 @@ func textFileToMessageRecords(filePath string, opts FolderImportOptions) ([]Mess
 			AIProvider:             opts.AIProvider,
 		},
 	}, nil
+}
+
+func folderConversationIDFromPath(rootPath, filePath string) string {
+	relPath, err := filepath.Rel(rootPath, filePath)
+	if err != nil {
+		relPath = filepath.Base(filePath)
+	}
+
+	relPath = filepath.ToSlash(relPath)
+	if relPath == "" || relPath == "." {
+		relPath = filepath.Base(filePath)
+	}
+
+	ext := path.Ext(relPath)
+	relNoExt := strings.TrimSuffix(relPath, ext)
+	if relNoExt == "" {
+		relNoExt = strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
+	}
+
+	return sanitizeID(relNoExt)
 }
 
 func isSupportedExtension(ext string) bool {
